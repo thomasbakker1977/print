@@ -6,3 +6,8 @@ __human_name__ = 'print'
 print ('Learning to code is hard, but it is a lot of fun\n')
 print ('When print special characters like $ or % I think I have to use double quotes\n')
 print ('But no that\'s not how it works\n')
+
+print ("what if I use a variable?\n")
+
+my_name = 'thomas'
+print ("Hello my name is  + 'my_name' ")
