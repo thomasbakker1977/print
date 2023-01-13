@@ -10,4 +10,4 @@ print ('But no that\'s not how it works\n')
 print ("what if I use a variable?\n")
 
 my_name = 'thomas'
-print ("Hello my name is  + 'my_name' ")
+print ("Hello my name is "+ my_name )
