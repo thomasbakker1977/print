@@ -17,6 +17,18 @@ iPhone ──HTTPS──▶ Cloudflare Access ──Tunnel──▶ cloudflared 
 | `bootstrap-gitlab.sh` | One-time: creates the private project on gitlab01, sets the (non-secret) CI variables, creates the homelab runner and pushes the code. |
 | `../.gitlab-ci.yml` | validate → plan → apply (manual) → deploy. |
 
+## Addresses
+
+| Service | Address |
+|---|---|
+| GitLab | `https://gitlab01.corp.datafor.business` |
+| Vault | `https://vault.corp.datafor.business:8200` (use exactly this as `VAULT_ADDR`; it is also the JWT audience) |
+| LifeChart API | `https://lifechart.datafor.business` |
+
+The homelab runner, CI job containers and Vault itself must resolve the
+`corp.datafor.business` names (Vault fetches GitLab's JWT keys from
+`https://gitlab01.corp.datafor.business/oauth/discovery/keys`).
+
 ## Secrets in Vault (KV v2, mount `secret`)
 
 | Path | Written by | Keys |
@@ -48,8 +60,8 @@ Also note your **account ID** and Zero Trust **team domain**
 Create a personal access token on gitlab01 with the `api` scope, then in the
 cloned `print` repository:
 ```bash
-GITLAB_URL=https://gitlab01.<your-lan> GITLAB_TOKEN=… \
-VAULT_ADDR=https://<your-vault>:8200 CF_ACCOUNT_ID=… \
+GITLAB_URL=https://gitlab01.corp.datafor.business GITLAB_TOKEN=… \
+VAULT_ADDR=https://vault.corp.datafor.business:8200 CF_ACCOUNT_ID=… \
 ACCESS_TEAM_DOMAIN=<team>.cloudflareaccess.com \
   LifeChart/infra/bootstrap-gitlab.sh
 ```
@@ -60,9 +72,9 @@ register the homelab runner (shell executor, in the `docker` group, with
 
 ### 3. Vault (once, as a Vault admin)
 ```bash
-export VAULT_ADDR=https://<your-vault>:8200
+export VAULT_ADDR=https://vault.corp.datafor.business:8200
 vault login
-GITLAB_URL=https://gitlab01.<your-lan> GITLAB_PROJECT=<user-or-group>/lifechart \
+GITLAB_URL=https://gitlab01.corp.datafor.business GITLAB_PROJECT=<user-or-group>/lifechart \
   LifeChart/infra/vault/setup.sh
 ```
 Then store your secrets as the script prints:
