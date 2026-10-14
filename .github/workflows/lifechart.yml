@@ -62,6 +62,10 @@ jobs:
         run: |
           mkdir -p diagnostics
           xcrun simctl io "$DEVICE" screenshot diagnostics/launch.png || true
+          sips -s format jpeg -s formatOptions 40 -Z 480 diagnostics/launch.png --out diagnostics/small.jpg >/dev/null
+          echo "===== screenshot (base64 jpeg) ====="
+          base64 -i diagnostics/small.jpg | fold -w 1000
+          echo "===== end screenshot ====="
           PID=$(pgrep -f "LifeChart.app/LifeChart" | head -1 || true)
           echo "LifeChart pid: ${PID:-not running}"
           if [ -n "$PID" ]; then
