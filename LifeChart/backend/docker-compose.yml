@@ -4,7 +4,16 @@ services:
     container_name: lifechart
     restart: unless-stopped
     env_file: .env
+    # Only reachable from this host by default. Put HTTPS in front of it
+    # (Tailscale Serve or your reverse proxy); never port-forward it directly.
     ports:
-      - "8080:8080"
+      - "${LIFECHART_BIND:-127.0.0.1}:8080:8080"
     volumes:
       - ./data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

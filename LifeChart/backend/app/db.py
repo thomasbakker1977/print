@@ -61,7 +61,10 @@ class Database:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.execute("PRAGMA journal_mode = WAL")
-        self._lock = threading.Lock()
+        # Deleted conversations and records should not linger in free pages.
+        self._conn.execute("PRAGMA secure_delete = ON")
+        # One connection is shared by all threads, so every access goes through this lock.
+        self._lock = threading.RLock()
         with self._lock, self._conn:
             self._conn.executescript(SCHEMA)
             self._conn.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('version', '0')")
@@ -69,12 +72,25 @@ class Database:
     # MARK: - Life chart records
 
     def current_version(self) -> int:
-        row = self._conn.execute("SELECT value FROM meta WHERE key = 'version'").fetchone()
+        with self._lock:
+            row = self._conn.execute("SELECT value FROM meta WHERE key = 'version'").fetchone()
         return int(row["value"])
 
-    def apply_changes(self, kind: str, records: list[tuple[str, int, bool, dict]]) -> None:
-        """Upsert (key, updated_at, deleted, data) tuples; last writer wins."""
-        assert kind in KINDS
+    def sync(self, changes: dict[str, list[tuple[str, int, bool, dict]]], cursor: int) -> dict:
+        """Applies a client's changes and returns everything newer than its cursor, atomically."""
+        with self._lock:
+            for kind, records in changes.items():
+                self.apply_changes(kind, records)
+            snapshot = self.current_version()
+            result = {kind: self.changes_since(kind, cursor, snapshot) for kind in KINDS}
+        result["cursor"] = snapshot
+        return result
+
+    def apply_changes(self, kind: str, records: list[tuple[str, int, bool, dict]]) -> int:
+        """Upsert (key, updated_at, deleted, data) tuples; last writer wins. Returns the number applied."""
+        if kind not in KINDS:
+            raise ValueError(f"unknown kind {kind}")
+        applied = 0
         with self._lock, self._conn:
             version = self.current_version()
             for key, updated_at, deleted, data in records:
@@ -96,47 +112,55 @@ class Database:
                     """,
                     (kind, key, updated_at, int(deleted), version, json.dumps(data)),
                 )
+                applied += 1
             self._conn.execute(
                 "UPDATE meta SET value = ? WHERE key = 'version'", (str(version),)
             )
+        return applied
 
     def get_record(self, kind: str, key: str) -> dict | None:
-        row = self._conn.execute(
-            "SELECT data FROM records WHERE kind = ? AND key = ?", (kind, key)
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT data FROM records WHERE kind = ? AND key = ?", (kind, key)
+            ).fetchone()
         return json.loads(row["data"]) if row else None
 
-    def changes_since(self, kind: str, cursor: int) -> list[dict]:
-        rows = self._conn.execute(
-            "SELECT data FROM records WHERE kind = ? AND version > ? ORDER BY version",
-            (kind, cursor),
-        ).fetchall()
+    def changes_since(self, kind: str, cursor: int, upto: int | None = None) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT data FROM records WHERE kind = ? AND version > ? AND version <= ? "
+                "ORDER BY version",
+                (kind, cursor, upto if upto is not None else 2**62),
+            ).fetchall()
         return [json.loads(r["data"]) for r in rows]
 
     def live_records(self, kind: str) -> list[dict]:
-        rows = self._conn.execute(
-            "SELECT data FROM records WHERE kind = ? AND deleted = 0 ORDER BY key", (kind,)
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT data FROM records WHERE kind = ? AND deleted = 0 ORDER BY key", (kind,)
+            ).fetchall()
         return [json.loads(r["data"]) for r in rows]
 
     def days_between(self, kind: str, start: str, end: str) -> list[dict]:
         """Live day-keyed records (entries or wearables) in an inclusive date range."""
-        rows = self._conn.execute(
-            """
-            SELECT data FROM records
-            WHERE kind = ? AND deleted = 0 AND key BETWEEN ? AND ?
-            ORDER BY key
-            """,
-            (kind, start, end),
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT data FROM records
+                WHERE kind = ? AND deleted = 0 AND key BETWEEN ? AND ?
+                ORDER BY key
+                """,
+                (kind, start, end),
+            ).fetchall()
         return [json.loads(r["data"]) for r in rows]
 
     # MARK: - Profile
 
     def get_setting(self, key: str, default: str = "") -> str:
-        row = self._conn.execute(
-            "SELECT value FROM meta WHERE key = ?", (f"setting:{key}",)
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM meta WHERE key = ?", (f"setting:{key}",)
+            ).fetchone()
         return row["value"] if row else default
 
     def set_setting(self, key: str, value: str) -> None:
@@ -160,12 +184,11 @@ class Database:
         return conversation_id
 
     def conversation_exists(self, conversation_id: str) -> bool:
-        return (
-            self._conn.execute(
+        with self._lock:
+            row = self._conn.execute(
                 "SELECT 1 FROM conversations WHERE id = ?", (conversation_id,)
             ).fetchone()
-            is not None
-        )
+        return row is not None
 
     def add_message(
         self, conversation_id: str, role: str, content: str, suggestions: list[dict] | None = None
@@ -182,9 +205,11 @@ class Database:
             )
 
     def list_conversations(self) -> list[dict]:
-        rows = self._conn.execute(
-            "SELECT id, title, mode, created_at, updated_at FROM conversations ORDER BY updated_at DESC"
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, title, mode, created_at, updated_at FROM conversations "
+                "ORDER BY updated_at DESC"
+            ).fetchall()
         return [
             {
                 "id": r["id"],
@@ -197,6 +222,10 @@ class Database:
         ]
 
     def get_conversation(self, conversation_id: str) -> dict | None:
+        with self._lock:
+            return self._get_conversation(conversation_id)
+
+    def _get_conversation(self, conversation_id: str) -> dict | None:
         row = self._conn.execute(
             "SELECT id, title, mode, created_at, updated_at FROM conversations WHERE id = ?",
             (conversation_id,),
@@ -231,15 +260,23 @@ class Database:
                 "UPDATE conversations SET summary = ? WHERE id = ?", (summary, conversation_id)
             )
 
+    def get_summary(self, conversation_id: str) -> str:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT summary FROM conversations WHERE id = ?", (conversation_id,)
+            ).fetchone()
+        return row["summary"] if row else ""
+
     def recent_summaries(self, exclude_id: str | None, limit: int = 12) -> list[dict]:
-        rows = self._conn.execute(
-            """
-            SELECT id, mode, summary, updated_at FROM conversations
-            WHERE summary != '' AND id IS NOT ?
-            ORDER BY updated_at DESC LIMIT ?
-            """,
-            (exclude_id, limit),
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT id, mode, summary, updated_at FROM conversations
+                WHERE summary != '' AND id IS NOT ?
+                ORDER BY updated_at DESC LIMIT ?
+                """,
+                (exclude_id, limit),
+            ).fetchall()
         return [
             {"mode": r["mode"], "summary": r["summary"], "updatedAt": r["updated_at"]}
             for r in reversed(rows)

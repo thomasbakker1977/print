@@ -6,12 +6,15 @@ phone like any other edit.
 """
 
 import uuid
-from datetime import date
+from datetime import date, timedelta
 
 from pydantic import BaseModel, Field, ValidationError
 
 from .db import Database, now_ms
 from .schemas import DATE_PATTERN, DayEntry, Goal, LifeEvent
+
+# The assistant may only write recent days; older history is edited in the app.
+LOG_WINDOW_DAYS = 7
 
 ACTION_TOOLS = [
     {
@@ -20,7 +23,8 @@ ACTION_TOOLS = [
             "Record what the user tells you about a day in their life chart: mood level, "
             "sleep, anxiety, irritability, mixed state or a note. Only use it when the user "
             "asks you to log something or clearly states it for their chart. Fields left "
-            "null are not changed; a note is appended to the day's notes."
+            "null are not changed; a note is appended to the day's notes. Only today and "
+            "the previous 7 days can be logged."
         ),
         "strict": True,
         "eager_input_streaming": True,
@@ -95,7 +99,7 @@ class LogDay(BaseModel):
 
 
 class LogLifeEvent(BaseModel):
-    date: str = Field(pattern=DATE_PATTERN)
+    date: str = Field(pattern=DATE_PATTERN, max_length=10)
     title: str = Field(min_length=1, max_length=200)
     impact: int = Field(ge=-4, le=4)
     details: str = Field(default="", max_length=2000)
@@ -125,11 +129,26 @@ def execute(db: Database, name: str, tool_input: dict) -> str:
     raise ActionError(f"Unknown tool {name}")
 
 
+def _timestamp(existing: dict | None) -> int:
+    """Newer than both the clock and the stored record, so the write always wins."""
+    return max(now_ms(), (existing or {}).get("updatedAt", 0) + 1)
+
+
+def _save(db: Database, kind: str, key: str, updated_at: int, data: dict) -> None:
+    if db.apply_changes(kind, [(key, updated_at, False, data)]) == 0:
+        raise ActionError("The change could not be saved.")
+
+
 def _log_day(db: Database, args: LogDay) -> str:
-    if date.fromisoformat(args.day) > date.today():
+    day = date.fromisoformat(args.day)
+    today = date.today()
+    if day > today:
         raise ActionError("Cannot log a day in the future.")
-    existing = db.get_record("entries", args.day) or {"day": args.day}
-    entry = DayEntry.model_validate({**existing, "updatedAt": now_ms(), "deleted": False})
+    if day < today - timedelta(days=LOG_WINDOW_DAYS):
+        raise ActionError("Only the last 7 days can be logged by voice; edit older days in the app.")
+    existing = db.get_record("entries", args.day)
+    base = existing if existing and not existing.get("deleted") else {"day": args.day}
+    entry = DayEntry.model_validate({**base, "updatedAt": _timestamp(existing), "deleted": False})
     changes = []
     for field in ("moodLevel", "sleepHours", "anxiety", "irritability", "mixed"):
         value = getattr(args, field)
@@ -141,13 +160,13 @@ def _log_day(db: Database, args: LogDay) -> str:
         changes.append("note")
     if not changes:
         raise ActionError("Nothing to log.")
-    db.apply_changes("entries", [(entry.day, entry.updatedAt, False, entry.model_dump())])
+    _save(db, "entries", entry.day, entry.updatedAt, entry.model_dump())
     return f"Logged {', '.join(changes)} for {args.day}"
 
 
 def _log_life_event(db: Database, args: LogLifeEvent) -> str:
     event = LifeEvent(id=str(uuid.uuid4()), updatedAt=now_ms(), **args.model_dump())
-    db.apply_changes("events", [(event.id, event.updatedAt, False, event.model_dump())])
+    _save(db, "events", event.id, event.updatedAt, event.model_dump())
     return f"Added life event '{args.title}' on {args.date}"
 
 
@@ -155,10 +174,10 @@ def _update_goal(db: Database, args: UpdateGoal) -> str:
     existing = db.get_record("goals", args.goalId)
     if existing is None or existing.get("deleted"):
         raise ActionError("No goal with that id.")
-    goal = Goal.model_validate({**existing, "updatedAt": now_ms()})
+    goal = Goal.model_validate({**existing, "updatedAt": _timestamp(existing)})
     if args.progress is not None:
         goal.progress = args.progress
     if args.status is not None:
         goal.status = args.status
-    db.apply_changes("goals", [(goal.id, goal.updatedAt, False, goal.model_dump())])
+    _save(db, "goals", goal.id, goal.updatedAt, goal.model_dump())
     return f"Updated goal '{goal.title}': {goal.progress}% {goal.status}"

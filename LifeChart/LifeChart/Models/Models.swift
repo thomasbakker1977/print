@@ -186,6 +186,34 @@ final class WearableDay {
     var date: Date { DayKey.date(from: dayKey) ?? .distantPast }
 }
 
+enum MediaKind: String {
+    case photo, video
+}
+
+/// A photo or video the user captured to show how a day felt. The file lives
+/// in the app's private storage on the phone and is never synced.
+@Model
+final class MoodMedia {
+    @Attribute(.unique) var id: String
+    var dayKey: String
+    var kindRaw: String
+    var fileName: String
+    var caption: String = ""
+    var createdAt: Date = Date.now
+
+    init(dayKey: String, kind: MediaKind, fileName: String, caption: String = "") {
+        self.id = UUID().uuidString
+        self.dayKey = dayKey
+        self.kindRaw = kind.rawValue
+        self.fileName = fileName
+        self.caption = caption
+    }
+
+    var kind: MediaKind { MediaKind(rawValue: kindRaw) ?? .photo }
+    var url: URL { MediaStore.url(for: fileName) }
+    var date: Date { DayKey.date(from: dayKey) ?? .distantPast }
+}
+
 enum DayKey {
     private static let formatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -224,4 +252,5 @@ extension Date {
 
 let allModelTypes: [any PersistentModel.Type] = [
     DayEntry.self, Medication.self, LifeEvent.self, Flashcard.self, Goal.self, WearableDay.self,
+    MoodMedia.self,
 ]

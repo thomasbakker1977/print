@@ -12,6 +12,7 @@ from garminconnect import Garmin
 
 
 def main() -> None:
+    os.umask(0o077)
     tokenstore = os.environ.get("GARMIN_TOKENSTORE", "/data/garmin-tokens")
     email = os.environ.get("GARMIN_EMAIL") or input("Garmin email: ")
     password = os.environ.get("GARMIN_PASSWORD") or getpass.getpass("Garmin password: ")

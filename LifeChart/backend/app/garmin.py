@@ -9,6 +9,8 @@ uses two-factor authentication).
 import asyncio
 import json
 import logging
+import threading
+import time
 from collections.abc import Callable
 from datetime import date, timedelta
 from typing import Any
@@ -80,6 +82,9 @@ class GarminSync:
         self._tokenstore = tokenstore
         self._client_factory = client_factory
         self._api = None
+        self._lock = threading.Lock()
+        self._retry_after = 0.0
+        self._failures = 0
         self.last_sync: int | None = None
         self.last_error: str | None = None
 
@@ -102,8 +107,21 @@ class GarminSync:
         return self._api
 
     def sync(self, today: date | None = None) -> int:
-        """Fetch recent days; returns the number of days that changed. Blocking."""
-        today = today or date.today()
+        """Fetch recent days; returns the number of days that changed. Blocking.
+
+        Concurrent calls return immediately, and repeated failures back off so
+        a wrong password does not lock the Garmin account.
+        """
+        if time.monotonic() < self._retry_after:
+            return 0
+        if not self._lock.acquire(blocking=False):
+            return 0
+        try:
+            return self._sync(today or date.today())
+        finally:
+            self._lock.release()
+
+    def _sync(self, today: date) -> int:
         try:
             api = self._login()
             backfill = not self._db.live_records("wearables")
@@ -129,11 +147,14 @@ class GarminSync:
             self._db.apply_changes("wearables", changed)
             self.last_sync = now_ms()
             self.last_error = None
+            self._failures = 0
             return len(changed)
         except Exception as error:  # network, auth or API changes on Garmin's side
             self._api = None
-            self.last_error = f"{type(error).__name__}: {error}"
-            log.warning("Garmin sync failed: %s", self.last_error)
+            self._failures += 1
+            self._retry_after = time.monotonic() + min(3600 * 6, 300 * 2 ** self._failures)
+            self.last_error = f"Garmin sync failed ({type(error).__name__}); see server logs"
+            log.warning("Garmin sync failed: %s: %s", type(error).__name__, error)
             return 0
 
 

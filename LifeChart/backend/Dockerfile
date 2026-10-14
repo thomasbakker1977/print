@@ -1,4 +1,4 @@
-FROM python:3.13-slim
+FROM python:3.13-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
@@ -9,7 +9,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 
-RUN useradd --create-home --uid 1000 lifechart && mkdir /data && chown lifechart /data
+RUN useradd --create-home --uid 1000 lifechart && mkdir -m 700 /data && chown lifechart /data
 USER lifechart
 VOLUME /data
 EXPOSE 8080

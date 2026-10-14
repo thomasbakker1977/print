@@ -11,13 +11,19 @@ from pydantic import BaseModel, Field
 DATE_PATTERN = r"^\d{4}-\d{2}-\d{2}$"
 
 
+# Upper bound for timestamps (year 2100) so bogus values cannot pin a record forever.
+MAX_TIMESTAMP_MS = 4_102_444_800_000
+TEXT = 8000
+MAX_RECORDS = 5000
+
+
 class Dose(BaseModel):
-    medicationId: str
-    amount: float = Field(ge=0)
+    medicationId: str = Field(max_length=64)
+    amount: float = Field(ge=0, le=100_000)
 
 
 class SyncRecord(BaseModel):
-    updatedAt: int = Field(ge=0)
+    updatedAt: int = Field(ge=0, le=MAX_TIMESTAMP_MS)
     deleted: bool = False
 
 
@@ -31,9 +37,9 @@ class DayEntry(SyncRecord):
     anxiety: int = Field(default=0, ge=0, le=3)
     irritability: int = Field(default=0, ge=0, le=3)
     menstruating: bool = False
-    weight: float | None = Field(default=None, ge=0)
-    notes: str = ""
-    doses: list[Dose] = []
+    weight: float | None = Field(default=None, ge=0, le=1000)
+    notes: str = Field(default="", max_length=TEXT)
+    doses: list[Dose] = Field(default=[], max_length=50)
 
     @property
     def key(self) -> str:
@@ -43,8 +49,8 @@ class DayEntry(SyncRecord):
 class Medication(SyncRecord):
     id: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=200)
-    unit: str = "mg"
-    defaultDose: float = Field(default=0, ge=0)
+    unit: str = Field(default="mg", max_length=20)
+    defaultDose: float = Field(default=0, ge=0, le=100_000)
     active: bool = True
     colorIndex: int = 0
 
@@ -58,7 +64,7 @@ class LifeEvent(SyncRecord):
     date: str = Field(pattern=DATE_PATTERN)
     title: str = Field(min_length=1, max_length=200)
     impact: int = Field(default=0, ge=-4, le=4)
-    details: str = ""
+    details: str = Field(default="", max_length=TEXT)
 
     @property
     def key(self) -> str:
@@ -70,11 +76,11 @@ class Flashcard(SyncRecord):
 
     id: str = Field(min_length=1, max_length=64)
     title: str = Field(min_length=1, max_length=200)
-    trigger: str = ""
-    schema_: str = Field(default="", alias="schema")
-    reality: str = ""
-    action: str = ""
-    createdAt: int = 0
+    trigger: str = Field(default="", max_length=TEXT)
+    schema_: str = Field(default="", alias="schema", max_length=TEXT)
+    reality: str = Field(default="", max_length=TEXT)
+    action: str = Field(default="", max_length=TEXT)
+    createdAt: int = Field(default=0, ge=0, le=MAX_TIMESTAMP_MS)
 
     model_config = {"populate_by_name": True, "serialize_by_alias": True}
 
@@ -106,12 +112,12 @@ class WearableDay(SyncRecord):
 class Goal(SyncRecord):
     id: str = Field(min_length=1, max_length=64)
     title: str = Field(min_length=1, max_length=200)
-    details: str = ""
-    area: str = ""
+    details: str = Field(default="", max_length=TEXT)
+    area: str = Field(default="", max_length=100)
     targetDate: str | None = Field(default=None, pattern=DATE_PATTERN)
     status: Literal["active", "achieved", "paused", "dropped"] = "active"
     progress: int = Field(default=0, ge=0, le=100)
-    createdAt: int = 0
+    createdAt: int = Field(default=0, ge=0, le=MAX_TIMESTAMP_MS)
 
     @property
     def key(self) -> str:
@@ -120,11 +126,11 @@ class Goal(SyncRecord):
 
 class SyncRequest(BaseModel):
     cursor: int = Field(default=0, ge=0)
-    entries: list[DayEntry] = []
-    medications: list[Medication] = []
-    events: list[LifeEvent] = []
-    flashcards: list[Flashcard] = []
-    goals: list[Goal] = []
+    entries: list[DayEntry] = Field(default=[], max_length=MAX_RECORDS)
+    medications: list[Medication] = Field(default=[], max_length=MAX_RECORDS)
+    events: list[LifeEvent] = Field(default=[], max_length=MAX_RECORDS)
+    flashcards: list[Flashcard] = Field(default=[], max_length=MAX_RECORDS)
+    goals: list[Goal] = Field(default=[], max_length=MAX_RECORDS)
 
 
 class SyncResponse(BaseModel):
@@ -137,12 +143,13 @@ class SyncResponse(BaseModel):
     wearables: list[WearableDay]
 
 
-PROFILE_FIELDS = ("aboutMe", "careHistory", "warningSigns", "crisisPlan", "myWhy")
+PROFILE_FIELDS = ("name", "aboutMe", "careHistory", "warningSigns", "crisisPlan", "myWhy")
 
 
 class Profile(BaseModel):
     """What the user tells the coach about themselves. Stored only on their server."""
 
+    name: str = Field(default="", max_length=100)
     aboutMe: str = Field(default="", max_length=8000)
     # Diagnoses, treatments and care so far, in their own words.
     careHistory: str = Field(default="", max_length=20000)
@@ -156,6 +163,14 @@ class Profile(BaseModel):
 CoachMode = Literal["talk", "perspective", "why", "review", "assistant"]
 
 
+class ImageAttachment(BaseModel):
+    """A photo the user chose to share with the coach. Used for one reply, never stored."""
+
+    mediaType: Literal["image/jpeg", "image/png"]
+    # Base64, at most ~3 MB decoded; the app downsizes photos before sending.
+    data: str = Field(min_length=1, max_length=4_000_000)
+
+
 class ChatRequest(BaseModel):
     conversationId: str | None = None
     message: str = Field(min_length=1, max_length=20000)
@@ -166,6 +181,7 @@ class ChatRequest(BaseModel):
     # Upcoming calendar events and open reminders, summarised on the phone.
     agenda: str = Field(default="", max_length=20000)
     assistantName: str = Field(default="Jarvis", min_length=1, max_length=40)
+    images: list[ImageAttachment] = Field(default=[], max_length=4)
 
 
 class SuggestedTask(BaseModel):

@@ -10,7 +10,7 @@ from app.db import Database
 from app.garmin import GarminSync
 from app.main import create_app
 
-TOKEN = "test-token-0123456789"
+TOKEN = "test-token-0123456789abcdefghijklmnop"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
 
 
@@ -205,7 +205,9 @@ def test_garmin_failure_is_reported():
     db = Database(":memory:")
     garmin = GarminSync(db, "a@b.c", "pw", "/tmp/none", client_factory=Broken)
     assert garmin.sync() == 0
-    assert "Cloudflare" in garmin.status()["lastError"]
+    assert "RuntimeError" in garmin.status()["lastError"]
+    assert "Cloudflare" not in garmin.status()["lastError"]  # details stay in the server log
+    assert garmin.sync() == 0  # backing off
 
 
 def test_wearables_are_server_only():
@@ -248,6 +250,7 @@ def test_context_combines_mood_watch_goals_and_history():
     assert "criticised by their manager" in context
     assert "Earlier weekly trends" in context and "mood avg -3.0" in context
     assert "Team meeting" in context
+    assert '<untrusted source="calendar">' in context
     assert "read aloud" in context
 
     # The conversation being continued is not listed as an "earlier" one.
@@ -391,3 +394,66 @@ def test_assistant_rejects_future_days():
         execute(Database(":memory:"), "log_day", {"day": "2999-01-01", "moodLevel": 1})
     with pytest.raises(ActionError):
         execute(Database(":memory:"), "log_day", {"day": "2026-01-01"})
+
+
+def test_chat_with_photo_sends_image_once_and_stores_marker():
+    responses = [SimpleNamespace(stop_reason="end_turn", content=[text("That grey sky says a lot.")])]
+    client, db, messages = make_client(responses)
+    events = read_sse(client.post("/api/coach/chat", headers=AUTH, json={
+        "message": "This is today", "images": [{"mediaType": "image/jpeg", "data": "aGVsbG8="}],
+    }).text)
+    sent = messages.requests[0]["messages"][-1]["content"]
+    assert sent[0]["type"] == "image" and sent[0]["source"]["data"] == "aGVsbG8="
+    stored = db.get_conversation(events[0][1]["conversationId"])["messages"][0]["content"]
+    assert "aGVsbG8=" not in stored and "[Shared 1 photo" in stored
+
+    too_many = [{"mediaType": "image/jpeg", "data": "eA=="}] * 5
+    assert client.post("/api/coach/chat", headers=AUTH,
+                       json={"message": "x", "images": too_many}).status_code == 422
+
+
+def test_csv_export_neutralises_formulas():
+    client, _, _ = make_client()
+    client.post("/api/sync", json={"entries": [
+        {"day": "2026-10-03", "updatedAt": 1, "notes": "=HYPERLINK(1)"}]}, headers=AUTH)
+    assert "'=HYPERLINK" in client.get("/api/export.csv", headers=AUTH).text
+
+
+def test_docs_are_disabled_and_bounds_enforced():
+    client, _, _ = make_client()
+    assert client.get("/docs").status_code == 404
+    assert client.get("/openapi.json").status_code == 404
+    huge = {"entries": [{"day": "2026-10-01", "updatedAt": 2**63}]}
+    assert client.post("/api/sync", json=huge, headers=AUTH).status_code == 422
+
+
+def test_assistant_cannot_rewrite_old_history():
+    from app.actions import ActionError, execute
+
+    old = (date.today() - timedelta(days=30)).isoformat()
+    with pytest.raises(ActionError):
+        execute(Database(":memory:"), "log_day", {"day": old, "moodLevel": 4})
+
+
+def test_assistant_write_wins_over_future_dated_record():
+    from app.actions import execute
+
+    db = Database(":memory:")
+    today = date.today().isoformat()
+    future = 4_000_000_000_000
+    db.apply_changes("entries", [(today, future, False, {"day": today, "updatedAt": future, "moodLevel": 0})])
+    execute(db, "log_day", {"day": today, "moodLevel": -2})
+    assert db.get_record("entries", today)["moodLevel"] == -2
+
+
+def test_sync_response_is_consistent_with_cursor():
+    db = Database(":memory:")
+    result = db.sync({"entries": [("2026-10-01", 1, False, {"day": "2026-10-01"})]}, 0)
+    assert result["cursor"] == 1 and len(result["entries"]) == 1
+    assert db.sync({}, result["cursor"])["entries"] == []
+
+
+def test_profile_name_reaches_coach():
+    db = Database(":memory:")
+    db.set_setting("name", "Sam")
+    assert "The user's name is Sam" in build_context(db, date.today(), None, "", False)

@@ -4,12 +4,14 @@ Run with:  uvicorn --factory app.main:build_app --host 0.0.0.0 --port 8080
 """
 
 import asyncio
+import collections
 import csv
 import hmac
 import io
 import json
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from datetime import date
 
@@ -25,6 +27,10 @@ from .garmin import GarminSync, run_periodically
 log = logging.getLogger("lifechart")
 
 MAX_HISTORY_MESSAGES = 40
+MIN_TOKEN_LENGTH = 32
+# Coach limits: protects against runaway cost if the token ever leaks.
+MAX_CONCURRENT_CHATS = 2
+MAX_CHATS_PER_HOUR = 120
 
 SYNC_MODELS = {
     "entries": schemas.DayEntry,
@@ -39,6 +45,29 @@ def sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+def csv_safe(value):
+    """Neutralise spreadsheet formulas in exported text cells."""
+    if isinstance(value, str) and value[:1] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + value
+    return value
+
+
+class RateLimiter:
+    def __init__(self, limit: int, window_seconds: float):
+        self._limit = limit
+        self._window = window_seconds
+        self._hits: collections.deque[float] = collections.deque()
+
+    def allow(self) -> bool:
+        now = time.monotonic()
+        while self._hits and now - self._hits[0] > self._window:
+            self._hits.popleft()
+        if len(self._hits) >= self._limit:
+            return False
+        self._hits.append(now)
+        return True
+
+
 def create_app(
     db: Database,
     api_token: str,
@@ -48,6 +77,9 @@ def create_app(
 ) -> FastAPI:
     garmin = garmin or GarminSync(db, None, None, "")
     background: set[asyncio.Task] = set()
+    summarizing: set[str] = set()
+    chat_slots = asyncio.Semaphore(MAX_CONCURRENT_CHATS)
+    chat_rate = RateLimiter(MAX_CHATS_PER_HOUR, 3600)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -58,7 +90,10 @@ def create_app(
         if task:
             task.cancel()
 
-    app = FastAPI(title="LifeChart", version="1.0", lifespan=lifespan)
+    app = FastAPI(
+        title="LifeChart", version="1.0", lifespan=lifespan,
+        docs_url=None, redoc_url=None, openapi_url=None,
+    )
     bearer = HTTPBearer(auto_error=False)
 
     def authorize(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)) -> None:
@@ -81,16 +116,14 @@ def create_app(
 
     @app.post("/api/sync", dependencies=auth, response_model=schemas.SyncResponse)
     def sync(request: schemas.SyncRequest) -> dict:
-        for kind in SYNC_MODELS:
-            records = getattr(request, kind)
-            db.apply_changes(
-                kind,
-                [(r.key, r.updatedAt, r.deleted, r.model_dump(by_alias=True)) for r in records],
-            )
-        response = {kind: db.changes_since(kind, request.cursor) for kind in SYNC_MODELS}
-        response["wearables"] = db.changes_since("wearables", request.cursor)
-        response["cursor"] = db.current_version()
-        return response
+        changes = {
+            kind: [
+                (r.key, r.updatedAt, r.deleted, r.model_dump(by_alias=True))
+                for r in getattr(request, kind)
+            ]
+            for kind in SYNC_MODELS
+        }
+        return db.sync(changes, request.cursor)
 
     @app.get("/api/entries", dependencies=auth)
     def entries(
@@ -125,14 +158,14 @@ def create_app(
                 f"{medications.get(d['medicationId'], '?')} {d['amount']:g}"
                 for d in e.get("doses", [])
             )
-            writer.writerow([
+            writer.writerow([csv_safe(v) for v in [
                 day, e.get("moodLevel"), e.get("moodRating"), e.get("mixed"),
                 e.get("moodSwitches"), e.get("sleepHours"), e.get("anxiety"),
                 e.get("irritability"), e.get("menstruating"), e.get("weight"), doses,
                 "; ".join(events.get(day, [])), w.get("sleepHours"), w.get("sleepScore"),
                 w.get("restingHeartRate"), w.get("hrv"), w.get("stressAvg"),
                 w.get("bodyBatteryHigh"), w.get("steps"), e.get("notes", ""),
-            ])
+            ]])
         return PlainTextResponse(
             out.getvalue(),
             media_type="text/csv",
@@ -182,20 +215,26 @@ def create_app(
 
     async def refresh_summary(conversation_id: str) -> None:
         found = db.get_conversation(conversation_id)
-        if coach is None or found is None:
+        if coach is None or found is None or conversation_id in summarizing:
             return
+        summarizing.add(conversation_id)
         try:
-            summary = await coach.summarize(found["messages"])
+            summary = await coach.summarize(
+                db.get_summary(conversation_id), found["messages"][-coach.SUMMARY_WINDOW:]
+            )
+            if summary:
+                db.set_summary(conversation_id, summary)
         except Exception:
             log.exception("Summarising conversation %s failed", conversation_id)
-            return
-        if summary:
-            db.set_summary(conversation_id, summary)
+        finally:
+            summarizing.discard(conversation_id)
 
     @app.post("/api/coach/chat", dependencies=auth)
     async def chat(request: schemas.ChatRequest) -> StreamingResponse:
         if coach is None:
             raise HTTPException(status_code=503, detail="Coach is not configured (ANTHROPIC_API_KEY)")
+        if not chat_rate.allow():
+            raise HTTPException(status_code=429, detail="Too many coach messages; try again later")
 
         conversation_id = request.conversationId
         if conversation_id is None:
@@ -205,11 +244,24 @@ def create_app(
             raise HTTPException(status_code=404, detail="Conversation not found")
 
         mode = db.get_conversation(conversation_id)["mode"]
-        db.add_message(conversation_id, "user", request.message)
+        stored_text = request.message
+        if request.images:
+            count = len(request.images)
+            stored_text += f"\n\n[Shared {count} photo{'s' if count > 1 else ''} of how they feel]"
+        db.add_message(conversation_id, "user", stored_text)
         stored = db.get_conversation(conversation_id)["messages"][-MAX_HISTORY_MESSAGES:]
         history = history_for_model(stored)
         while history and history[0]["role"] != "user":
             history.pop(0)
+        if request.images:
+            # Photos go to the model with this message only; the server keeps none.
+            history[-1] = {
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": i.mediaType, "data": i.data}}
+                    for i in request.images
+                ] + [{"type": "text", "text": stored_text}],
+            }
 
         today = date.today()
         if request.localTime:
@@ -223,6 +275,14 @@ def create_app(
         )
 
         async def events():
+            await chat_slots.acquire()
+            try:
+                async for chunk in reply_events():
+                    yield chunk
+            finally:
+                chat_slots.release()
+
+        async def reply_events():
             yield sse("conversation", {"conversationId": conversation_id, "mode": mode})
             text_parts: list[str] = []
             suggestions: list[dict] = []
@@ -265,10 +325,15 @@ def create_app(
 
 def build_app() -> FastAPI:
     """Builds the app from environment variables (used by uvicorn --factory)."""
+    # Database, WAL files and Garmin tokens are readable by this user only.
+    os.umask(0o077)
     logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
     token = os.environ.get("LIFECHART_API_TOKEN", "")
-    if len(token) < 16:
-        raise RuntimeError("Set LIFECHART_API_TOKEN to a random string of at least 16 characters")
+    if len(token) < MIN_TOKEN_LENGTH or len(set(token)) < 10:
+        raise RuntimeError(
+            "Set LIFECHART_API_TOKEN to a random value of at least 32 characters "
+            "(openssl rand -hex 32)"
+        )
 
     db = Database(os.environ.get("LIFECHART_DB", "/data/lifechart.db"))
 
