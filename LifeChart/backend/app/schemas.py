@@ -137,14 +137,23 @@ class SyncResponse(BaseModel):
     wearables: list[WearableDay]
 
 
+PROFILE_FIELDS = ("aboutMe", "careHistory", "warningSigns", "crisisPlan", "myWhy")
+
+
 class Profile(BaseModel):
-    """Free text the user writes about themselves, given to the coach as background."""
+    """What the user tells the coach about themselves. Stored only on their server."""
 
     aboutMe: str = Field(default="", max_length=8000)
+    # Diagnoses, treatments and care so far, in their own words.
+    careHistory: str = Field(default="", max_length=20000)
+    # Relapse prevention plan (signaleringsplan): early warning signs and agreed actions.
+    warningSigns: str = Field(default="", max_length=20000)
+    # Who to contact in a crisis and what helps.
+    crisisPlan: str = Field(default="", max_length=8000)
     myWhy: str = Field(default="", max_length=4000)
 
 
-CoachMode = Literal["talk", "perspective", "why", "review"]
+CoachMode = Literal["talk", "perspective", "why", "review", "assistant"]
 
 
 class ChatRequest(BaseModel):
@@ -156,6 +165,7 @@ class ChatRequest(BaseModel):
     localTime: str | None = Field(default=None, max_length=64)
     # Upcoming calendar events and open reminders, summarised on the phone.
     agenda: str = Field(default="", max_length=20000)
+    assistantName: str = Field(default="Jarvis", min_length=1, max_length=40)
 
 
 class SuggestedTask(BaseModel):

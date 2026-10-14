@@ -164,8 +164,11 @@ def test_rejects_invalid_records():
 
 def test_profile_and_export():
     client, _, _ = make_client()
-    client.put("/api/profile", json={"aboutMe": "Bipolar II", "myWhy": "To help"}, headers=AUTH)
-    assert client.get("/api/profile", headers=AUTH).json()["myWhy"] == "To help"
+    client.put("/api/profile", json={"aboutMe": "Bipolar II", "myWhy": "To help",
+                                     "warningSigns": "Sleeping < 6h"}, headers=AUTH)
+    profile = client.get("/api/profile", headers=AUTH).json()
+    assert profile["myWhy"] == "To help" and profile["warningSigns"] == "Sleeping < 6h"
+    assert profile["crisisPlan"] == ""
 
     client.post("/api/sync", json={
         "medications": [{"id": "m1", "name": "Lamotrigine", "updatedAt": 1}],
@@ -223,6 +226,7 @@ def test_context_combines_mood_watch_goals_and_history():
     db = Database(":memory:")
     today = date(2026, 10, 14)
     db.set_setting("myWhy", "To make people feel seen")
+    db.set_setting("warningSigns", "Yellow: sleeping under 6 hours -> call my nurse")
     db.apply_changes("entries", [("2026-10-13", 1, False, {
         "day": "2026-10-13", "moodLevel": 2, "sleepHours": 4, "notes": "racing thoughts", "doses": []})])
     db.apply_changes("wearables", [("2026-10-13", 1, False, {
@@ -236,6 +240,8 @@ def test_context_combines_mood_watch_goals_and_history():
 
     context = build_context(db, today, "2026-10-14T21:00:00+02:00", "Tomorrow 09:00 Team meeting", True)
     assert "To make people feel seen" in context
+    assert "signaleringsplan" in context and "call my nurse" in context
+    assert "crisis plan" not in context.lower().split("signaleringsplan")[0]
     assert "mood +2 moderate mania" in context
     assert "watch: sleep 4.2h" in context and "HRV status low" in context
     assert "Sleep by 23:00 | active | 40% done" in context
@@ -331,3 +337,57 @@ def test_every_mode_has_a_prompt(mode):
     blocks = coach.system_blocks(mode, "ctx")
     assert blocks[1]["cache_control"] == {"type": "ephemeral"}
     assert "call 112" in blocks[0]["text"]
+
+
+# MARK: - Assistant actions
+
+
+def test_assistant_logs_day_event_and_goal():
+    today = date.today().isoformat()
+    responses = [
+        SimpleNamespace(stop_reason="tool_use", content=[
+            tool_use("log_day", {"day": today, "moodLevel": -1, "sleepHours": 6, "anxiety": None,
+                                 "irritability": None, "mixed": None, "note": "Tired"}),
+            tool_use("log_life_event", {"date": today, "title": "Job interview", "impact": 2,
+                                        "details": ""}, "toolu_2"),
+            tool_use("update_goal", {"goalId": "g1", "progress": 60, "status": None}, "toolu_3"),
+            tool_use("update_goal", {"goalId": "missing", "progress": 10, "status": None}, "toolu_4"),
+        ]),
+        SimpleNamespace(stop_reason="end_turn", content=[text("Done.")]),
+    ]
+    client, db, messages = make_client(responses)
+    db.apply_changes("entries", [(today, 1, False, {"day": today, "notes": "Morning walk", "anxiety": 2})])
+    db.apply_changes("goals", [("g1", 1, False, {"id": "g1", "title": "Walk", "updatedAt": 1})])
+
+    events = read_sse(client.post("/api/coach/chat", headers=AUTH, json={
+        "message": "Log minus one, six hours sleep, tired. Had a job interview. Walking goal at 60.",
+        "mode": "assistant", "spoken": True, "assistantName": "Friday",
+    }).text)
+    actions = [data["summary"] for kind, data in events if kind == "action"]
+    assert len(actions) == 3
+
+    entry = db.get_record("entries", today)
+    assert entry["moodLevel"] == -1 and entry["sleepHours"] == 6
+    assert entry["anxiety"] == 2  # untouched
+    assert entry["notes"] == "Morning walk\nTired"
+    assert [e["title"] for e in db.live_records("events")] == ["Job interview"]
+    assert db.get_record("goals", "g1")["progress"] == 60
+
+    results = messages.requests[1]["messages"][-1]["content"]
+    assert results[-1]["is_error"] is True
+    assert '"Friday"' in messages.requests[0]["system"][2]["text"]
+    assert "Mode: personal assistant" in messages.requests[0]["system"][1]["text"]
+
+    # Changes reach the phone through the normal sync.
+    synced = client.post("/api/sync", json={"cursor": 2}, headers=AUTH).json()
+    assert {e["day"] for e in synced["entries"]} == {today}
+    assert len(synced["events"]) == 1 and synced["goals"][0]["progress"] == 60
+
+
+def test_assistant_rejects_future_days():
+    from app.actions import ActionError, execute
+
+    with pytest.raises(ActionError):
+        execute(Database(":memory:"), "log_day", {"day": "2999-01-01", "moodLevel": 1})
+    with pytest.raises(ActionError):
+        execute(Database(":memory:"), "log_day", {"day": "2026-01-01"})

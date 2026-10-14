@@ -152,12 +152,12 @@ def create_app(
 
     @app.get("/api/profile", dependencies=auth, response_model=schemas.Profile)
     def get_profile() -> dict:
-        return {"aboutMe": db.get_setting("aboutMe"), "myWhy": db.get_setting("myWhy")}
+        return {field: db.get_setting(field) for field in schemas.PROFILE_FIELDS}
 
     @app.put("/api/profile", dependencies=auth, response_model=schemas.Profile)
     def put_profile(profile: schemas.Profile) -> dict:
-        db.set_setting("aboutMe", profile.aboutMe)
-        db.set_setting("myWhy", profile.myWhy)
+        for field in schemas.PROFILE_FIELDS:
+            db.set_setting(field, getattr(profile, field))
         return profile.model_dump()
 
     # MARK: - Coach
@@ -218,18 +218,23 @@ def create_app(
             except ValueError:
                 pass
         context = build_context(
-            db, today, request.localTime, request.agenda, request.spoken, conversation_id
+            db, today, request.localTime, request.agenda, request.spoken, conversation_id,
+            request.assistantName,
         )
 
         async def events():
             yield sse("conversation", {"conversationId": conversation_id, "mode": mode})
             text_parts: list[str] = []
             suggestions: list[dict] = []
+            actions: list[dict] = []
             try:
-                async for kind, payload in coach.stream_reply(mode, context, history):
+                async for kind, payload in coach.stream_reply(mode, context, history, db):
                     if kind == "text":
                         text_parts.append(payload)
                         yield sse("text", {"text": payload})
+                    elif kind == "action":
+                        actions.append(payload)
+                        yield sse("action", payload)
                     else:
                         suggestions.append(payload)
                         yield sse("suggestion", payload)
@@ -239,6 +244,9 @@ def create_app(
                 log.exception("Coach reply failed")
                 yield sse("error", {"message": "The coach is unavailable right now. Try again."})
             reply = "".join(text_parts).strip()
+            if actions:
+                done = "; ".join(a["summary"] for a in actions)
+                reply = f"{reply}\n\n✓ {done}".strip()
             if reply or suggestions:
                 db.add_message(conversation_id, "assistant", reply, suggestions)
                 task = asyncio.create_task(refresh_summary(conversation_id))

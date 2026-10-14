@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta
 import anthropic
 from pydantic import ValidationError
 
+from .actions import ACTION_TOOLS, ActionError, execute
 from .db import Database
 from .schemas import SuggestedEvent, SuggestedFlashcard, SuggestedGoal, SuggestedTask
 
@@ -63,6 +64,10 @@ Coaching style:
 anything, and ask one good question at a time rather than several.
 - Be warm, direct and down to earth. Speak like a person, not a pamphlet. \
 Short replies are usually better; the user can always ask for more.
+- Reply in the language the user speaks or writes to you (often Dutch).
+- When distress is acute and talking does not help yet, offer a concrete \
+skill first, for example from DBT: TIPP (cold water, intense movement, paced \
+breathing), STOP, or finding wise mind. Explore once they have settled.
 - End with something usable when the moment calls for it: one small next step, \
 a balanced thought to hold on to, or a question to sit with.
 
@@ -86,7 +91,9 @@ suggest_goal tool; help them make it specific and realistic.
 When a concrete \
 plan comes up, you can propose a reminder or calendar block with the \
 suggest_task and suggest_event tools; the user confirms each one in the app, \
-so propose only what they agreed to or clearly want, and mention it in your reply.
+so propose only what they agreed to or clearly want, and mention it in your reply. \
+When the user asks you to record something in their life chart or goals, do \
+it directly with log_day, log_life_event or update_goal and confirm briefly.
 
 Boundaries:
 - You are a coach, not a therapist or doctor, and you complement their care \
@@ -94,12 +101,16 @@ rather than replace it. Encourage them to bring important themes to their \
 therapist. Decisions about starting, stopping or changing medication belong \
 with their prescriber.
 - Mood shifts in the life chart (several nights of very short sleep, rising \
-mood or irritability, or a slide into depression) are worth naming gently, \
-with a suggestion to contact their care team if an episode may be starting.
+mood or irritability, or a slide into depression) are worth naming gently. If \
+the user has a relapse prevention plan (signaleringsplan), compare what you \
+see with their own early warning signs and remind them of the actions they \
+agreed on with their care team, including contacting that team when the plan \
+says so.
 - If the user talks about wanting to die, harming themselves or someone else, \
 or seems to be in acute crisis, set the coaching aside. Respond with care, ask \
-directly about their safety, and urge them to reach out now: {crisis_info}. \
-Stay with them in the conversation.\
+directly about their safety, and urge them to reach out now: to the contacts \
+in their crisis plan if they have one, or to {crisis_info}. Stay with them in \
+the conversation.\
 """
 
 MODE_PROMPTS = {
@@ -149,6 +160,27 @@ progress against their goals and Why, not against perfection, and watch for the 
 demanding critic. Give concrete, prioritised advice (at most three points), \
 help them adjust goals that no longer fit, and agree on one or two next steps; \
 offer to put them in their reminders or calendar.\
+""",
+    "assistant": """\
+Mode: personal assistant. You are the user's always-available assistant, \
+usually spoken to hands-free. Be quick, capable and calm, with a light touch \
+of warmth and wit; answer in a sentence or two unless asked for more, and get \
+things done:
+- Log what they tell you about their day with log_day, life events with \
+log_life_event, and goal progress with update_goal, then confirm briefly what \
+you recorded.
+- Propose reminders and calendar blocks for what they want to remember or plan.
+- Answer questions about their data ("how did I sleep this week?") from the \
+context you have.
+- When asked for a morning briefing: how they slept (watch and self-report), \
+anything in their signaleringsplan worth watching, today's agenda, open \
+reminders due today, and one goal to move forward, then ask how they feel and \
+offer to log it. Keep it under a minute when spoken.
+- When asked for an evening check-in: ask about mood (help them place it on \
+the -4..+4 scale), sleep last night if not logged, anxiety, irritability, \
+medication and anything notable, then log it in one go and close warmly.
+When something deeper comes up, slow down and coach as you would in a \
+conversation; you can suggest switching to one of the coaching modes.\
 """,
 }
 
@@ -300,6 +332,7 @@ WEARABLE_FIELDS = [
 ]
 
 MAX_TOOL_ROUNDS = 5
+ACTION_NAMES = {tool["name"] for tool in ACTION_TOOLS}
 TREND_DAYS = 182
 
 SUMMARY_PROMPT = """\
@@ -360,14 +393,24 @@ def build_context(
     agenda: str,
     spoken: bool,
     conversation_id: str | None = None,
+    assistant_name: str = "Jarvis",
 ) -> str:
     """A snapshot of the user's profile, life chart and agenda for the system prompt."""
     when = local_time or today.isoformat()
-    lines = [f"Current local time: {when} ({today.strftime('%A')})."]
+    lines = [
+        f"Current local time: {when} ({today.strftime('%A')}).",
+        f'The user calls you "{assistant_name}".',
+    ]
 
-    about = db.get_setting("aboutMe").strip()
-    if about:
-        lines += ["", "What the user wrote about themselves:", about]
+    for key, heading in (
+        ("aboutMe", "What the user wrote about themselves:"),
+        ("careHistory", "Their care and treatment history, in their own words:"),
+        ("warningSigns", "Their relapse prevention plan (signaleringsplan): early warning signs and agreed actions:"),
+        ("crisisPlan", "Their crisis plan:"),
+    ):
+        value = db.get_setting(key).strip()
+        if value:
+            lines += ["", heading, value]
     why = db.get_setting("myWhy").strip()
     if why:
         lines += ["", f"The user's current Why statement: {why}"]
@@ -384,7 +427,7 @@ def build_context(
                 parts.append(f"target {g['targetDate']}")
             if g.get("details"):
                 parts.append(g["details"][:300].replace("\n", " "))
-            lines.append("- " + " | ".join(parts))
+            lines.append(f"- [id {g['id']}] " + " | ".join(parts))
     achieved = [g["title"] for g in goals if g.get("status") == "achieved"]
     if achieved:
         lines.append("Goals already achieved: " + "; ".join(achieved[-10:]))
@@ -540,9 +583,10 @@ class Coach:
         return "".join(b.text for b in response.content if b.type == "text").strip()
 
     async def stream_reply(
-        self, mode: str, context: str, history: list[dict]
+        self, mode: str, context: str, history: list[dict], db: Database | None = None
     ) -> AsyncIterator[tuple[str, object]]:
         messages = list(history)
+        tools = TOOLS + ACTION_TOOLS if db is not None else TOOLS
         system = self.system_blocks(mode, context)
         for _ in range(MAX_TOOL_ROUNDS):
             async with self._client.beta.messages.stream(
@@ -550,7 +594,7 @@ class Coach:
                 max_tokens=16000,
                 system=system,
                 messages=messages,
-                tools=TOOLS,
+                tools=tools,
                 output_config={"effort": "medium"},
                 cache_control={"type": "ephemeral"},
                 betas=["server-side-fallback-2026-07-01"],
@@ -568,6 +612,20 @@ class Coach:
 
             results = []
             for block in tool_uses:
+                if db is not None and block.name in ACTION_NAMES:
+                    try:
+                        summary = execute(db, block.name, block.input)
+                    except ActionError as error:
+                        results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "is_error": True,
+                            "content": str(error),
+                        })
+                        continue
+                    yield ("action", {"tool": block.name, "summary": summary})
+                    results.append({"type": "tool_result", "tool_use_id": block.id, "content": summary})
+                    continue
                 model = SUGGESTION_MODELS.get(block.name)
                 try:
                     if model is None:
