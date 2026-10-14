@@ -1,0 +1,10 @@
+services:
+  lifechart:
+    build: .
+    container_name: lifechart
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
