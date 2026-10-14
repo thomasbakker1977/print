@@ -36,10 +36,12 @@ final class SyncService: ObservableObject {
 
             // Remember what was sent, so edits made while the request is in
             // flight stay marked for the next sync.
-            let sent: [(any SyncedModel, Date)] =
-                entries.map { ($0, $0.updatedAt) } + medications.map { ($0, $0.updatedAt) }
-                + events.map { ($0, $0.updatedAt) } + flashcards.map { ($0, $0.updatedAt) }
-                + goals.map { ($0, $0.updatedAt) }
+            var sent: [(any SyncedModel, Date)] = []
+            sent += entries.map { ($0 as any SyncedModel, $0.updatedAt) }
+            sent += medications.map { ($0 as any SyncedModel, $0.updatedAt) }
+            sent += events.map { ($0 as any SyncedModel, $0.updatedAt) }
+            sent += flashcards.map { ($0 as any SyncedModel, $0.updatedAt) }
+            sent += goals.map { ($0 as any SyncedModel, $0.updatedAt) }
 
             let request = SyncRequestDTO(
                 cursor: cursor,
@@ -52,7 +54,6 @@ final class SyncService: ObservableObject {
             let response = try await api.sync(request)
 
             for (model, stamp) in sent where model.updatedAt == stamp {
-                var model = model
                 model.needsSync = false
             }
             try merge(response.entries, as: DayEntry.self, into: context)

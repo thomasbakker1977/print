@@ -105,6 +105,7 @@ struct SyncResponseDTO: Codable {
 }
 
 struct ProfileDTO: Codable, Equatable {
+    var name: String = ""
     var aboutMe: String = ""
     var careHistory: String = ""
     var warningSigns: String = ""

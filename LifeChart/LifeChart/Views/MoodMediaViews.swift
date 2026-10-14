@@ -155,10 +155,15 @@ struct MediaViewer: View {
                             dismiss()
                         }
                         Button("Delete", systemImage: "trash", role: .destructive) {
-                            MediaStore.delete(media.fileName)
-                            context.delete(media)
-                            try? context.save()
+                            // Close the viewer before the model disappears under it.
+                            let item = media
+                            let file = media.fileName
                             dismiss()
+                            Task { @MainActor in
+                                MediaStore.delete(file)
+                                context.delete(item)
+                                try? context.save()
+                            }
                         }
                     } label: {
                         Image(systemName: "ellipsis.circle")

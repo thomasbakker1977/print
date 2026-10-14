@@ -294,7 +294,7 @@ struct ChatView: View {
                 } label: {
                     Image(systemName: speech.isRecording ? "stop.circle.fill" : "mic.circle.fill")
                         .font(.system(size: 32))
-                        .foregroundStyle(speech.isRecording ? .red : .accentColor)
+                        .foregroundStyle(speech.isRecording ? Color.red : Color.accentColor)
                 }
                 .accessibilityLabel(speech.isRecording ? "Stop and send" : "Speak")
 

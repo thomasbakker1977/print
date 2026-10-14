@@ -110,7 +110,7 @@ struct LifeChartApp: App {
                 break
             }
         }
-        .backgroundTask(.appRefresh(Self.refreshTaskId)) {
+        .backgroundTask(.appRefresh(Self.refreshTaskId)) { [container] in
             await Self.refresh(container)
         }
     }
