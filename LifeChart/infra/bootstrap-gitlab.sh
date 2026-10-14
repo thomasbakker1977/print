@@ -17,6 +17,12 @@ set -euo pipefail
 : "${GITLAB_URL:?}" "${GITLAB_TOKEN:?}" "${VAULT_ADDR:?}" "${CF_ACCOUNT_ID:?}" "${ACCESS_TEAM_DOMAIN:?}"
 GITLAB_URL="${GITLAB_URL%/}"
 PROJECT_NAME="${PROJECT_NAME:-lifechart}"
+
+for name in GITLAB_TOKEN CF_ACCOUNT_ID ACCESS_TEAM_DOMAIN VAULT_ADDR; do
+  case "${!name}" in
+    *"<"*|*">"*) echo "Replace the placeholder in $name with your real value." >&2; exit 1 ;;
+  esac
+done
 API="$GITLAB_URL/api/v4"
 
 curl_tls=()
@@ -40,7 +46,11 @@ if [ -n "${GITLAB_NAMESPACE:-}" ]; then
   namespace_id="$(api GET "/namespaces/$(urlencode "$GITLAB_NAMESPACE")" | json "['id']")"
   namespace_args=(--data-urlencode "namespace_id=$namespace_id")
 fi
-owner="${GITLAB_NAMESPACE:-$(api GET /user | json "['username']")}"
+if ! user_json="$(api GET /user)"; then
+  echo "GitLab rejected the token (check GITLAB_TOKEN: a personal access token with the api scope)." >&2
+  exit 1
+fi
+owner="${GITLAB_NAMESPACE:-$(echo "$user_json" | json "['username']")}"
 project_path="$owner/$PROJECT_NAME"
 if project_json="$(api GET "/projects/$(urlencode "$project_path")" 2>/dev/null)"; then
   echo "Project $project_path already exists."
