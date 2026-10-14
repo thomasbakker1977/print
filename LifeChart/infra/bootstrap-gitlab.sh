@@ -56,10 +56,22 @@ if [ -n "${GITLAB_CA_PEM:-}" ]; then
   git_tls=(-c "http.sslCAInfo=$GITLAB_CA_PEM")
 fi
 
+# Calls the GitLab API; on an error, prints GitLab's explanation and fails.
+# Set QUIET_404=1 for lookups where "not found" is an expected answer.
 api() {
-  local method="$1" path="$2"
+  local method="$1" path="$2" body status
   shift 2
-  curl --fail-with-body -sS ${curl_tls[@]+"${curl_tls[@]}"} -X "$method" -H "PRIVATE-TOKEN: $GITLAB_TOKEN" "$API$path" "$@"
+  body="$(curl -sS ${curl_tls[@]+"${curl_tls[@]}"} -X "$method" -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+    -w '\n%{http_code}' "$API$path" "$@")" || return 1
+  status="${body##*$'\n'}"
+  body="${body%$'\n'*}"
+  if [ "$status" -ge 400 ]; then
+    if [ "$status" != 404 ] || [ -z "${QUIET_404:-}" ]; then
+      echo "GitLab API $method $path failed ($status): $body" >&2
+    fi
+    return 1
+  fi
+  printf '%s\n' "$body"
 }
 json() { python3 -c "import json,sys; print(json.load(sys.stdin)$1)"; }
 urlencode() { python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$1"; }
@@ -76,7 +88,7 @@ if ! user_json="$(api GET /user)"; then
 fi
 owner="${GITLAB_NAMESPACE:-$(echo "$user_json" | json "['username']")}"
 project_path="$owner/$PROJECT_NAME"
-if project_json="$(api GET "/projects/$(urlencode "$project_path")" 2>/dev/null)"; then
+if project_json="$(QUIET_404=1 api GET "/projects/$(urlencode "$project_path")")"; then
   echo "Project $project_path already exists."
 else
   project_json="$(api POST /projects --data-urlencode "name=$PROJECT_NAME" \
@@ -91,8 +103,8 @@ http_url="$(echo "$project_json" | json "['http_url_to_repo']")"
 #    settings live in Vault)
 set_variable() {
   local key="$1" value="$2" type="${3:-env_var}"
-  api PUT "/projects/$project_id/variables/$key" --data-urlencode "value=$value" \
-      --data-urlencode "variable_type=$type" >/dev/null 2>&1 \
+  QUIET_404=1 api PUT "/projects/$project_id/variables/$key" --data-urlencode "value=$value" \
+      --data-urlencode "variable_type=$type" >/dev/null \
     || api POST "/projects/$project_id/variables" --data-urlencode "key=$key" \
       --data-urlencode "value=$value" --data-urlencode "variable_type=$type" >/dev/null
   echo "  variable $key set"
