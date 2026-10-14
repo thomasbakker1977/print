@@ -58,6 +58,10 @@ struct LifeChartApp: App {
     /// iOS encrypts app data at rest; it stays readable after first unlock so
     /// background refresh can plan check-ins.
     static let opened: Result<ModelContainer, Error> = Result {
+        // On a fresh install this folder does not exist yet; creating it first
+        // avoids Core Data's noisy (but harmless) recovery messages.
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
         let schema = Schema(allModelTypes)
         return try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema)])
     }
