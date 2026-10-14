@@ -123,11 +123,11 @@ def test_sync_round_trip_and_last_writer_wins():
     assert first["cursor"] == 1
     assert first["entries"][0]["moodLevel"] == -2
 
-    # A stale write from another device is ignored.
+    # A stale write from another device is ignored, and the server's version is echoed back.
     stale = {**entry, "updatedAt": 500, "moodLevel": 3}
     second = client.post("/api/sync", json={"cursor": 1, "entries": [stale]}, headers=AUTH).json()
     assert second["cursor"] == 1
-    assert second["entries"] == []
+    assert [e["moodLevel"] for e in second["entries"]] == [-2]
 
     # A newer write wins and shows up for a device that synced from scratch.
     newer = {**entry, "updatedAt": 2000, "moodLevel": 1}
@@ -499,3 +499,12 @@ def test_access_verifier_checks_signature_audience_and_issuer():
     other = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     forged = pyjwt.encode({"aud": "aud-123", "iss": "https://team.cloudflareaccess.com"}, other, algorithm="RS256")
     assert not verifier.verify(forged)
+
+
+def test_sync_echoes_server_version_of_rejected_writes():
+    client, db, _ = make_client()
+    newer = {"day": "2026-10-01", "updatedAt": 5000, "moodLevel": -2}
+    first = client.post("/api/sync", json={"entries": [newer]}, headers=AUTH).json()
+    stale = {"day": "2026-10-01", "updatedAt": 4000, "moodLevel": 1}
+    result = client.post("/api/sync", json={"cursor": first["cursor"], "entries": [stale]}, headers=AUTH).json()
+    assert [(e["day"], e["moodLevel"]) for e in result["entries"]] == [("2026-10-01", -2)]

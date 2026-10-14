@@ -41,8 +41,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     }
 
     func userNotificationCenter(_: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
-        let prompt = response.notification.request.content.userInfo["prompt"] as? String
-        await MainActor.run { AppRouter.shared.openAssistant(prompt: prompt) }
+        let kind = response.notification.request.content.userInfo["kind"] as? String
+        await MainActor.run {
+            AppRouter.shared.openAssistant(prompt: kind.flatMap { CheckInService.prompts[$0] })
+        }
     }
 }
 
@@ -53,24 +55,44 @@ struct LifeChartApp: App {
 
     static let refreshTaskId = "nl.lifechart.app.refresh"  // also in Info.plist
 
-    let container: ModelContainer = {
+    /// iOS encrypts app data at rest; it stays readable after first unlock so
+    /// background refresh can plan check-ins.
+    static let opened: Result<ModelContainer, Error> = Result {
         let schema = Schema(allModelTypes)
-        // iOS encrypts app data at rest; it stays readable after first unlock so
-        // background refresh can plan check-ins.
-        let configuration = ModelConfiguration(schema: schema)
-        do {
-            return try ModelContainer(for: schema, configurations: [configuration])
-        } catch {
-            fatalError("Could not open the LifeChart database: \(error)")
-        }
-    }()
+        return try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema)])
+    }
+
+    /// Never crash on a database problem: show what happened and keep the data file.
+    let container: ModelContainer = (try? LifeChartApp.opened.get())
+        ?? (try! ModelContainer(for: Schema(allModelTypes),
+                                configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]))
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .environmentObject(AppRouter.shared)
-                .environmentObject(SyncService.shared)
-                .environmentObject(AgendaService.shared)
+            Group {
+                if case let .failure(error) = Self.opened {
+                    ContentUnavailableView(
+                        "LifeChart could not open its data",
+                        systemImage: "exclamationmark.triangle",
+                        description: Text("Your data has not been deleted. Please update the app or contact support.\n\n\(error.localizedDescription)")
+                    )
+                } else {
+                    ContentView()
+                }
+            }
+            .environmentObject(AppRouter.shared)
+            .environmentObject(SyncService.shared)
+            .environmentObject(AgendaService.shared)
+            // Hide health data in the app switcher.
+            .overlay {
+                if scenePhase != .active {
+                    ZStack {
+                        Color(.systemBackground)
+                        Image(systemName: "lock.fill").font(.largeTitle).foregroundStyle(.secondary)
+                    }
+                    .ignoresSafeArea()
+                }
+            }
         }
         .modelContainer(container)
         .onChange(of: scenePhase) { _, phase in

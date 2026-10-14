@@ -33,9 +33,10 @@ final class ChatModel: ObservableObject {
         guard let conversationId, items.isEmpty else { return }
         do {
             let detail = try await APIClient.shared.conversation(conversationId)
+            // A message may have been sent while this was loading; keep it.
             items = detail.messages.map {
                 ChatItem(role: $0.role, text: $0.content, suggestions: $0.suggestions)
-            }
+            } + items
         } catch {
             self.error = error.localizedDescription
         }
@@ -46,12 +47,17 @@ final class ChatModel: ObservableObject {
         guard !message.isEmpty, !isStreaming else { return }
         error = nil
         items.append(ChatItem(role: "user", text: message, attachment: images.first))
-        items.append(ChatItem(role: "assistant", text: ""))
-        let index = items.count - 1
+        let reply = ChatItem(role: "assistant", text: "")
+        let replyId = reply.id
+        items.append(reply)
         isStreaming = true
         defer { isStreaming = false }
+        // Look the reply up by id: `items` can change while awaiting.
+        func update(_ change: (inout ChatItem) -> Void) {
+            if let index = items.firstIndex(where: { $0.id == replyId }) { change(&items[index]) }
+        }
 
-        let shareAgenda = UserDefaults.standard.object(forKey: "shareAgenda") as? Bool ?? true
+        let shareAgenda = UserDefaults.standard.bool(forKey: "shareAgenda")
         let agenda = shareAgenda ? await AgendaService.shared.summary() : ""
         let request = ChatRequestDTO(
             conversationId: conversationId,
@@ -69,11 +75,11 @@ final class ChatModel: ObservableObject {
                 case let .conversation(id):
                     conversationId = id
                 case let .text(chunk):
-                    items[index].text += chunk
+                    update { $0.text += chunk }
                 case let .suggestion(suggestion):
-                    items[index].suggestions.append(suggestion)
+                    update { $0.suggestions.append(suggestion) }
                 case let .action(summary):
-                    items[index].actions.append(summary)
+                    update { $0.actions.append(summary) }
                     onDataChanged?()
                 case let .failure(message):
                     error = message
@@ -81,11 +87,11 @@ final class ChatModel: ObservableObject {
                     break
                 }
             }
-            items[index].text = items[index].text.trimmingCharacters(in: .whitespacesAndNewlines)
-            onReplyFinished?(items[index].text)
+            update { $0.text = $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+            onReplyFinished?(items.first { $0.id == replyId }?.text ?? "")
         } catch {
             self.error = error.localizedDescription
-            if items[index].text.isEmpty { items.remove(at: index) }
+            items.removeAll { $0.id == replyId && $0.text.isEmpty }
         }
     }
 }
@@ -323,6 +329,7 @@ struct MessageBubble: View {
     let isStreaming: Bool
     @Environment(\.modelContext) private var context
     @State private var error: String?
+    @State private var pendingLink: URL?
 
     private var isUser: Bool { item.role == "user" }
 
@@ -335,7 +342,7 @@ struct MessageBubble: View {
             if item.text.isEmpty && isStreaming {
                 ProgressView().padding(12)
             } else if !item.text.isEmpty {
-                Text(LocalizedStringKey(item.text))
+                messageText
                     .textSelection(.enabled)
                     .padding(12)
                     .background(isUser ? Color.accentColor.opacity(0.18) : Color(.secondarySystemBackground),
@@ -362,6 +369,33 @@ struct MessageBubble: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+        // Links in coach replies could have been planted via a calendar invite:
+        // only https links open, and only after showing where they go.
+        .environment(\.openURL, OpenURLAction { url in
+            guard url.scheme == "https" else { return .discarded }
+            pendingLink = url
+            return .handled
+        })
+        .confirmationDialog("Open \(pendingLink?.host() ?? "link")?", isPresented: Binding(
+            get: { pendingLink != nil }, set: { if !$0 { pendingLink = nil } }
+        ), titleVisibility: .visible) {
+            Button("Open in browser") {
+                if let url = pendingLink { UIApplication.shared.open(url) }
+                pendingLink = nil
+            }
+        } message: {
+            Text(pendingLink?.absoluteString ?? "")
+        }
+    }
+
+    /// Your own words verbatim; coach replies with simple formatting (bold, lists).
+    private var messageText: Text {
+        if isUser { return Text(verbatim: item.text) }
+        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        if let attributed = try? AttributedString(markdown: item.text, options: options) {
+            return Text(attributed)
+        }
+        return Text(verbatim: item.text)
     }
 
     private func add(_ suggestion: Suggestion, index: Int) {
@@ -406,7 +440,7 @@ struct MessageBubble: View {
             guard var profile = try? await APIClient.shared.profile() else { return }
             profile.myWhy = text
             if let saved = try? await APIClient.shared.saveProfile(profile) {
-                UserDefaults.standard.set(saved.myWhy, forKey: "myWhy")
+                ProtectedStore.set("myWhy", saved.myWhy)
             }
         }
     }

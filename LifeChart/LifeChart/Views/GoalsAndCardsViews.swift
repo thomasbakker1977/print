@@ -130,7 +130,10 @@ struct GoalEditor: View {
 // MARK: - My Why
 
 struct MyWhyView: View {
-    @AppStorage("myWhy") private var cachedWhy = ""
+    private var cachedWhy: String {
+        get { ProtectedStore.get("myWhy") }
+        nonmutating set { ProtectedStore.set("myWhy", newValue) }
+    }
     @State private var profile = ProfileDTO()
     @State private var loaded = false
     @State private var status: String?

@@ -4,7 +4,8 @@ import Foundation
 /// Reads the user's calendars and reminders (iCloud, Google, Outlook/Exchange —
 /// whatever is set up on the iPhone) and adds items the coach proposes.
 /// Calendar data never leaves the phone except as the short agenda summary
-/// sent with a coach message, and only when the user has turned that on.
+/// sent with a coach message, and only when the user has turned that on
+/// (More → Calendar & reminders; off by default).
 @MainActor
 final class AgendaService: ObservableObject {
     static let shared = AgendaService()

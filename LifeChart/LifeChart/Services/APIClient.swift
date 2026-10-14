@@ -20,10 +20,10 @@ final class APIClient {
     static let shared = APIClient()
 
     private let session: URLSession = {
-        let configuration = URLSessionConfiguration.default
+        let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 30
         configuration.timeoutIntervalForResource = 600
-        return URLSession(configuration: configuration)
+        return URLSession(configuration: configuration, delegate: RedirectGuard(), delegateQueue: nil)
     }()
 
     private let encoder = JSONEncoder()
@@ -79,11 +79,11 @@ final class APIClient {
     }
 
     func conversation(_ id: String) async throws -> ConversationDetailDTO {
-        try await send("GET", "/api/coach/conversations/\(id)")
+        try await send("GET", "/api/coach/conversations/\(try Self.checkedId(id))")
     }
 
     func deleteConversation(_ id: String) async throws {
-        let request = try makeRequest("DELETE", "/api/coach/conversations/\(id)")
+        let request = try makeRequest("DELETE", "/api/coach/conversations/\(try Self.checkedId(id))")
         let (data, response) = try await session.data(for: request)
         try check(response, data)
     }
@@ -148,6 +148,12 @@ final class APIClient {
 
     // MARK: - Plumbing
 
+    /// Conversation ids are UUIDs; anything else is refused before it reaches a URL path.
+    private static func checkedId(_ id: String) throws -> String {
+        guard UUID(uuidString: id) != nil else { throw APIError.invalidURL }
+        return id
+    }
+
     private func makeRequest(_ method: String, _ path: String) throws -> URLRequest {
         guard isConfigured else { throw APIError.notConfigured }
         var base = serverURL
@@ -199,6 +205,19 @@ final class APIClient {
     }
 }
 
+/// Never forward the bearer token or Cloudflare secret to another host.
+final class RedirectGuard: NSObject, URLSessionTaskDelegate {
+    func urlSession(
+        _: URLSession, task: URLSessionTask, willPerformHTTPRedirection _: HTTPURLResponse,
+        newRequest request: URLRequest
+    ) async -> URLRequest? {
+        guard let target = request.url, let origin = task.originalRequest?.url,
+              target.scheme == "https", target.host == origin.host
+        else { return nil }
+        return request
+    }
+}
+
 enum Keychain {
     private static let service = "LifeChart"
 
@@ -217,17 +236,26 @@ enum Keychain {
         return String(data: data, encoding: .utf8)
     }
 
-    static func write(_ key: String, value: String) {
+    @discardableResult
+    static func write(_ key: String, value: String) -> Bool {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
         ]
-        SecItemDelete(query as CFDictionary)
-        guard !value.isEmpty else { return }
-        var item = query
-        item[kSecValueData as String] = Data(value.utf8)
-        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        SecItemAdd(item as CFDictionary, nil)
+        guard !value.isEmpty else {
+            SecItemDelete(query as CFDictionary)
+            return true
+        }
+        // Readable for background refresh after first unlock; never leaves this device.
+        let attributes: [String: Any] = [
+            kSecValueData as String: Data(value.utf8),
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+        var status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if status == errSecItemNotFound {
+            status = SecItemAdd(query.merging(attributes) { $1 } as CFDictionary, nil)
+        }
+        return status == errSecSuccess
     }
 }

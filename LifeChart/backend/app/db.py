@@ -79,18 +79,31 @@ class Database:
     def sync(self, changes: dict[str, list[tuple[str, int, bool, dict]]], cursor: int) -> dict:
         """Applies a client's changes and returns everything newer than its cursor, atomically."""
         with self._lock:
+            rejected: dict[str, list[str]] = {}
             for kind, records in changes.items():
-                self.apply_changes(kind, records)
+                applied = {key for key in self._apply(kind, records)}
+                rejected[kind] = [key for key, *_ in records if key not in applied]
             snapshot = self.current_version()
             result = {kind: self.changes_since(kind, cursor, snapshot) for kind in KINDS}
+            # Echo the server's winning version of every pushed record it did
+            # not accept, so the phone replaces its stale copy.
+            for kind, keys in rejected.items():
+                sent = {r.get("day") or r.get("id") for r in result[kind]}
+                for key in keys:
+                    record = self.get_record(kind, key)
+                    if record is not None and key not in sent:
+                        result[kind].append(record)
         result["cursor"] = snapshot
         return result
 
     def apply_changes(self, kind: str, records: list[tuple[str, int, bool, dict]]) -> int:
         """Upsert (key, updated_at, deleted, data) tuples; last writer wins. Returns the number applied."""
+        return len(self._apply(kind, records))
+
+    def _apply(self, kind: str, records: list[tuple[str, int, bool, dict]]) -> list[str]:
         if kind not in KINDS:
             raise ValueError(f"unknown kind {kind}")
-        applied = 0
+        applied: list[str] = []
         with self._lock, self._conn:
             version = self.current_version()
             for key, updated_at, deleted, data in records:
@@ -112,7 +125,7 @@ class Database:
                     """,
                     (kind, key, updated_at, int(deleted), version, json.dumps(data)),
                 )
-                applied += 1
+                applied.append(key)
             self._conn.execute(
                 "UPDATE meta SET value = ? WHERE key = 'version'", (str(version),)
             )

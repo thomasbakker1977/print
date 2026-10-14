@@ -2,7 +2,7 @@ import SwiftData
 import SwiftUI
 
 struct MoreView: View {
-    @AppStorage("crisisPlan") private var crisisPlan = ""
+    @State private var crisisPlan = ProtectedStore.get("crisisPlan")
 
     var body: some View {
         NavigationStack {
@@ -36,6 +36,7 @@ struct MoreView: View {
                 }
             }
             .navigationTitle("More")
+            .onAppear { crisisPlan = ProtectedStore.get("crisisPlan") }
         }
     }
 }
@@ -44,7 +45,6 @@ struct MoreView: View {
 
 struct ProfileEditor: View {
     @AppStorage("profileName") private var cachedName = ""
-    @AppStorage("crisisPlan") private var cachedCrisisPlan = ""
     @State private var profile = ProfileDTO()
     @State private var loaded = false
     @State private var status: String?
@@ -100,14 +100,14 @@ struct ProfileEditor: View {
 
     private func cache() {
         cachedName = profile.name
-        cachedCrisisPlan = profile.crisisPlan
-        UserDefaults.standard.set(profile.myWhy, forKey: "myWhy")
+        ProtectedStore.set("crisisPlan", profile.crisisPlan)
+        ProtectedStore.set("myWhy", profile.myWhy)
     }
 }
 
 /// Always available offline, because it matters most when things are hard.
 struct CrisisPlanView: View {
-    @AppStorage("crisisPlan") private var crisisPlan = ""
+    @State private var crisisPlan = ProtectedStore.get("crisisPlan")
 
     var body: some View {
         ScrollView {
@@ -228,11 +228,15 @@ struct AssistantSettingsView: View {
             } footer: {
                 Text("Say \"Hey Siri, talk to LifeChart\" to start the assistant hands-free.")
             }
-            Section("Voice") {
+            Section {
                 Picker("Speech language", selection: $language) {
                     ForEach(SpeechLanguage.allCases) { Text($0.title).tag($0.rawValue) }
                 }
                 Toggle("Read coach replies aloud", isOn: $readAloud)
+            } header: {
+                Text("Voice")
+            } footer: {
+                Text("Speech is recognised on your iPhone when the language model is installed (Settings → General → Keyboard → Dictation languages). Otherwise iOS sends the audio to Apple for recognition.")
             }
         }
         .navigationTitle("Assistant & voice")
@@ -243,7 +247,7 @@ struct AssistantSettingsView: View {
 
 struct CalendarSettingsView: View {
     @EnvironmentObject private var agenda: AgendaService
-    @AppStorage("shareAgenda") private var shareAgenda = true
+    @AppStorage("shareAgenda") private var shareAgenda = false
 
     var body: some View {
         Form {
@@ -259,7 +263,7 @@ struct CalendarSettingsView: View {
             Section {
                 Toggle("Share my agenda with the coach", isOn: $shareAgenda)
             } footer: {
-                Text("A short summary of the next 7 days and open reminders is sent with each coach message so it can help you plan. Nothing is added without your tap.")
+                Text("Off by default. When on, a short summary of the next 7 days and open reminders is sent with each coach message so it can help you plan. Text from invites by others is treated as data, never as instructions. Nothing is added without your tap.")
             }
         }
         .navigationTitle("Calendar & reminders")

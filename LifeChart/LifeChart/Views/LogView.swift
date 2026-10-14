@@ -49,6 +49,10 @@ struct DayEditor: View {
             EntryForm(entry: entry)
         } else {
             ProgressView().task {
+                // Pull first, so a day logged elsewhere (another device, the
+                // assistant) is not replaced by a blank local copy.
+                await SyncService.shared.sync(context)
+                guard matches.isEmpty else { return }
                 context.insert(DayEntry(dayKey: dayKey))
                 try? context.save()
             }

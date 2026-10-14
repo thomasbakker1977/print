@@ -3,6 +3,26 @@ import SwiftUI
 /// Exports for the user's psychiatrist, GP or care team.
 @MainActor
 enum ExportService {
+    /// A fresh, protected folder per export; old exports are removed first.
+    private static func exportURL(_ name: String) -> URL? {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("Exports", isDirectory: true)
+        try? FileManager.default.removeItem(at: root)
+        let folder = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(
+                at: folder, withIntermediateDirectories: true,
+                attributes: [.protectionKey: FileProtectionType.complete]
+            )
+        } catch {
+            return nil
+        }
+        return folder.appendingPathComponent(name)
+    }
+
+    static func cleanUp() {
+        try? FileManager.default.removeItem(at: FileManager.default.temporaryDirectory.appendingPathComponent("Exports"))
+    }
+
     static func pdf(data: ChartData, range: ChartRange) -> URL? {
         let page = VStack(alignment: .leading, spacing: 16) {
             Text("Life Chart").font(.largeTitle.bold())
@@ -22,7 +42,7 @@ enum ExportService {
 
         let renderer = ImageRenderer(content: page)
         renderer.proposedSize = .init(width: 842, height: nil)
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("LifeChart.pdf")
+        guard let url = exportURL("LifeChart.pdf") else { return nil }
         var succeeded = false
         renderer.render { size, draw in
             var box = CGRect(origin: .zero, size: size)
@@ -78,9 +98,9 @@ enum ExportService {
             ])
         }
         let text = rows.map { $0.map(field).joined(separator: ",") }.joined(separator: "\n")
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("LifeChart.csv")
+        guard let url = exportURL("LifeChart.csv") else { return nil }
         do {
-            try text.write(to: url, atomically: true, encoding: .utf8)
+            try Data(text.utf8).write(to: url, options: [.atomic, .completeFileProtection])
             return url
         } catch {
             return nil

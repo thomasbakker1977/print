@@ -15,6 +15,20 @@ import UserNotifications
 final class CheckInService {
     static let shared = CheckInService()
 
+    /// Notifications carry only a kind; the text sent to the assistant is fixed
+    /// here, so titles written by other people can never be sent as the user.
+    static let prompts: [String: String] = [
+        "log": "Let's do my evening check-in.",
+        "silence.1": "I haven't checked in for a day. Ask me how I'm doing.",
+        "silence.2": "I've been quiet for two days. Check in with me gently.",
+        "silence.3": "I've been quiet for three days. Check how I'm doing and whether I should reach out to someone from my crisis plan.",
+        "followup": "Ask me how the things I planned with you went.",
+        "overdue": "Help me with my overdue reminders.",
+        "sleep": "My watch shows two short nights. Let's check this against my signaleringsplan.",
+    ]
+
+    static let category = "lifechart.checkin"
+
     private let center = UNUserNotificationCenter.current()
     private let defaults = UserDefaults.standard
     private static let prefix = "checkin."
@@ -90,7 +104,11 @@ final class CheckInService {
         let settings = await center.notificationSettings()
         guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else { return }
 
-        let hello = name.isEmpty ? "Hey" : "Hey \(name)"
+        center.setNotificationCategories([
+            UNNotificationCategory(identifier: Self.category, actions: [], intentIdentifiers: [],
+                                   hiddenPreviewsBodyPlaceholder: "LifeChart check-in", options: []),
+        ])
+        let hello = name.isEmpty ? "Hi" : "Hi \(name)"
         scheduleLogReminders(context, hello: hello)
         scheduleSilenceCheckIns(hello: hello)
         await scheduleFollowUps(hello: hello)
@@ -105,30 +123,23 @@ final class CheckInService {
         let todayAt = Date.now.startOfDay.addingTimeInterval(TimeInterval(logReminderMinutes * 60))
 
         if !loggedToday, todayAt > .now {
-            schedule("log.today", at: todayAt,
-                     title: "How was today?",
-                     body: "\(hello), take a minute to log your mood. You can just say it to me.",
-                     prompt: "Let's do my evening check-in.")
+            schedule("log.today", at: todayAt, kind: "log",
+                     title: "How was today?", body: "\(hello), a minute for your day? You can just say it.")
         }
         // Tomorrow's reminder is re-planned (or dropped) as soon as tomorrow is logged.
-        schedule("log.tomorrow", at: todayAt.adding(days: 1),
-                 title: "How was today?",
-                 body: "\(hello), take a minute to log your mood. You can just say it to me.",
-                 prompt: "Let's do my evening check-in.")
+        schedule("log.tomorrow", at: todayAt.adding(days: 1), kind: "log",
+                 title: "How was today?", body: "\(hello), a minute for your day? You can just say it.")
     }
 
     private func scheduleSilenceCheckIns(hello: String) {
         let messages = [
-            (1, "Checking in", "\(hello), I haven't heard from you since yesterday. How are you doing?",
-             "I haven't checked in for a day. Ask me how I'm doing."),
-            (2, "Thinking of you", "\(hello), it's been two days. No pressure, just a quick word on how things are?",
-             "I've been quiet for two days. Check in with me gently."),
-            (3, "Still here for you", "\(hello), three quiet days. If things are hard, it may help to reach out to someone from your plan. I'm here too.",
-             "I've been quiet for three days. Check how I'm doing and whether I should reach out to someone from my crisis plan."),
+            (1, "Checking in", "\(hello), how are you doing today?"),
+            (2, "Thinking of you", "\(hello), no pressure. Just a quick word on how things are?"),
+            (3, "Still here for you", "\(hello), it's been a few days. I'm here whenever you want to talk."),
         ]
-        for (days, title, body, prompt) in messages {
+        for (days, title, body) in messages {
             schedule("silence.\(days)", at: allowed(lastActivity.addingTimeInterval(TimeInterval(days) * 86400)),
-                     title: title, body: body, prompt: prompt)
+                     kind: "silence.\(days)", title: title, body: body)
         }
     }
 
@@ -142,11 +153,9 @@ final class CheckInService {
             }
             remaining.append(followUp)
             guard followUp.fireDate > .now else { continue }
-            schedule("followup.\(Int(followUp.fireDate.timeIntervalSince1970)).\(abs(followUp.title.hashValue))",
-                     at: allowed(followUp.fireDate),
-                     title: followUp.title,
-                     body: "\(hello), how did \"\(followUp.title)\" go?",
-                     prompt: "Ask me how \"\(followUp.title)\" went.")
+            schedule("followup.\(Int(followUp.fireDate.timeIntervalSince1970))",
+                     at: allowed(followUp.fireDate), kind: "followup",
+                     title: "How did it go?", body: "\(hello), how did your plan go?")
         }
         followUps = remaining
     }
@@ -164,11 +173,9 @@ final class CheckInService {
         }
         let fresh = overdue.filter { !notifiedKeys.contains("overdue.\($0.0)") }
         guard !fresh.isEmpty else { return }
-        let titles = fresh.prefix(2).map { "\"\($0.1)\"" }.joined(separator: " and ")
-        schedule("overdue", at: allowed(.now.addingTimeInterval(60)),
+        schedule("overdue", at: allowed(.now.addingTimeInterval(60)), kind: "overdue",
                  title: "Still on your list",
-                 body: "\(hello), \(titles) didn't happen yet. Want to do it now, reschedule or let it go?",
-                 prompt: "Help me with my overdue tasks: \(titles).")
+                 body: "\(hello), \(fresh.count) reminder\(fresh.count == 1 ? "" : "s") didn't happen yet. Do it, reschedule or let it go?")
         notifiedKeys.formUnion(fresh.map { "overdue.\($0.0)" })
     }
 
@@ -179,10 +186,8 @@ final class CheckInService {
         let short = nights.filter { ($0.sleepHours ?? 24) < 5.5 }
         let key = "sleep.\(DayKey.today)"
         guard short.count >= 2, !notifiedKeys.contains(key) else { return }
-        schedule("sleep", at: allowed(.now.addingTimeInterval(60)),
-                 title: "Short nights",
-                 body: "\(hello), your watch shows two short nights in a row. Worth a look at your signaleringsplan together?",
-                 prompt: "My watch shows two short nights. Let's check this against my signaleringsplan.")
+        schedule("sleep", at: allowed(.now.addingTimeInterval(60)), kind: "sleep",
+                 title: "Checking in", body: "\(hello), two short nights in a row. Want to look at it together?")
         notifiedKeys.insert(key)
     }
 
@@ -200,13 +205,14 @@ final class CheckInService {
         return morning
     }
 
-    private func schedule(_ id: String, at date: Date, title: String, body: String, prompt: String) {
+    private func schedule(_ id: String, at date: Date, kind: String, title: String, body: String) {
         guard date > .now else { return }
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
         content.sound = .default
-        content.userInfo = ["prompt": prompt]
+        content.categoryIdentifier = Self.category
+        content.userInfo = ["kind": kind]
         let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: date)
         let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
         center.add(UNNotificationRequest(identifier: Self.prefix + id, content: content, trigger: trigger))

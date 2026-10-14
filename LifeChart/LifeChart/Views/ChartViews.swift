@@ -147,7 +147,7 @@ struct ChartScreen: View {
                     }
                 }
             }
-            .sheet(item: $export) { file in
+            .sheet(item: $export, onDismiss: ExportService.cleanUp) { file in
                 ShareSheet(items: [file.url])
             }
         }
