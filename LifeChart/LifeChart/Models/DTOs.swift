@@ -110,6 +110,7 @@ struct ProfileDTO: Codable, Equatable {
     var warningSigns: String = ""
     var crisisPlan: String = ""
     var myWhy: String = ""
+    var coachStyle: String = ""
 }
 
 struct GarminStatusDTO: Codable {
@@ -176,6 +177,22 @@ struct ChatRequestDTO: Codable {
     var localTime: String
     var agenda: String
     var assistantName: String
+    var images: [ImageDTO]
+}
+
+struct ImageDTO: Codable {
+    var mediaType: String
+    var data: String
+}
+
+enum LocalTime {
+    /// "2026-10-14T21:30:00+02:00" in the phone's time zone.
+    static var now: String {
+        let formatter = ISO8601DateFormatter()
+        formatter.timeZone = .current
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.string(from: .now)
+    }
 }
 
 /// Something the coach proposes; the user decides whether to add it.

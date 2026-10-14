@@ -143,7 +143,7 @@ class SyncResponse(BaseModel):
     wearables: list[WearableDay]
 
 
-PROFILE_FIELDS = ("name", "aboutMe", "careHistory", "warningSigns", "crisisPlan", "myWhy")
+PROFILE_FIELDS = ("name", "aboutMe", "careHistory", "warningSigns", "crisisPlan", "myWhy", "coachStyle")
 
 
 class Profile(BaseModel):
@@ -158,6 +158,8 @@ class Profile(BaseModel):
     # Who to contact in a crisis and what helps.
     crisisPlan: str = Field(default="", max_length=8000)
     myWhy: str = Field(default="", max_length=4000)
+    # How the user wants their coach to come across (e.g. a personality profile they like).
+    coachStyle: str = Field(default="", max_length=8000)
 
 
 CoachMode = Literal["talk", "perspective", "why", "review", "reflect", "assistant"]

@@ -456,7 +456,10 @@ def test_sync_response_is_consistent_with_cursor():
 def test_profile_name_reaches_coach():
     db = Database(":memory:")
     db.set_setting("name", "Sam")
-    assert "The user's name is Sam" in build_context(db, date.today(), None, "", False)
+    db.set_setting("coachStyle", "Driven achiever, results first")
+    context = build_context(db, date.today(), None, "", False)
+    assert "The user's name is Sam" in context
+    assert "Driven achiever, results first" in context
 
 
 def test_cloudflare_access_is_enforced_when_configured():

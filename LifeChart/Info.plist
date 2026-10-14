@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Take photos and videos that capture how your day feels.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Talk to your coach and dictate notes.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Turn what you say into text for your coach and your notes. Recognition runs on your iPhone when your language supports it.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Let your coach plan around your schedule and add calendar blocks you approve.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Let your coach see open tasks, add reminders you approve and check in on them.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>nl.lifechart.app.refresh</string>
+	</array>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<false/>
+	</dict>
+</dict>
+</plist>

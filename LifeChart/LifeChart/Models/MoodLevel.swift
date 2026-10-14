@@ -48,7 +48,7 @@ enum MoodLevel: Int, CaseIterable, Identifiable {
         case .severeLowDepression: Color(red: 0.22, green: 0.42, blue: 0.80)
         case .moderateDepression: Color(red: 0.40, green: 0.60, blue: 0.90)
         case .mildDepression: Color(red: 0.62, green: 0.78, blue: 0.95)
-        case .balanced: Color(red: 0.45, green: 0.75, blue: 0.55)
+        case .balanced: Color(red: 0.60, green: 0.63, blue: 0.65)
         case .mildElevation: Color(red: 1.00, green: 0.78, blue: 0.45)
         case .moderateMania: Color(red: 0.98, green: 0.60, blue: 0.25)
         case .severeLowMania: Color(red: 0.92, green: 0.38, blue: 0.18)

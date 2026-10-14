@@ -45,11 +45,16 @@ enum MediaStore {
 
     /// The photo itself, or a frame from the start of a video.
     static func image(for media: MoodMedia) -> UIImage? {
-        switch media.kind {
+        image(url: media.url, kind: media.kind)
+    }
+
+    /// Thread-safe variant for background loading (SwiftData models stay on the main actor).
+    static func image(url: URL, kind: MediaKind) -> UIImage? {
+        switch kind {
         case .photo:
-            return UIImage(contentsOfFile: media.url.path)
+            return UIImage(contentsOfFile: url.path)
         case .video:
-            let generator = AVAssetImageGenerator(asset: AVURLAsset(url: media.url))
+            let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
             generator.appliesPreferredTrackTransform = true
             let time = CMTime(seconds: 0.5, preferredTimescale: 600)
             guard let frame = try? generator.copyCGImage(at: time, actualTime: nil) else { return nil }

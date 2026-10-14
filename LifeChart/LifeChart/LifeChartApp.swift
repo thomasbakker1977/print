@@ -51,11 +51,12 @@ struct LifeChartApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @Environment(\.scenePhase) private var scenePhase
 
-    static let refreshTaskId = "nl.lifechart.app.refresh"
+    static let refreshTaskId = "nl.lifechart.app.refresh"  // also in Info.plist
 
     let container: ModelContainer = {
         let schema = Schema(allModelTypes)
-        // Health data is encrypted on disk whenever the phone is locked.
+        // iOS encrypts app data at rest; it stays readable after first unlock so
+        // background refresh can plan check-ins.
         let configuration = ModelConfiguration(schema: schema)
         do {
             return try ModelContainer(for: schema, configurations: [configuration])
