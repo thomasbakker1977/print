@@ -127,10 +127,10 @@ struct ServerStatusDTO: Codable {
 // MARK: - Coach
 
 enum CoachMode: String, Codable, CaseIterable, Identifiable {
-    case talk, perspective, why, review, assistant
+    case talk, perspective, why, review, reflect, assistant
 
     /// The modes offered as coaching conversations; the assistant has its own screen.
-    static var coaching: [CoachMode] { [.talk, .perspective, .why, .review] }
+    static var coaching: [CoachMode] { [.talk, .perspective, .why, .reflect, .review] }
 
     var id: String { rawValue }
 
@@ -140,6 +140,7 @@ enum CoachMode: String, Codable, CaseIterable, Identifiable {
         case .perspective: "Make sense of a moment"
         case .why: "Find my Why"
         case .review: "Review & advice"
+        case .reflect: "Reflect on an event"
         case .assistant: "Assistant"
         }
     }
@@ -150,6 +151,7 @@ enum CoachMode: String, Codable, CaseIterable, Identifiable {
         case .perspective: "Slow down, rewind and see a situation from more sides."
         case .why: "Discover what really drives you."
         case .review: "Look back on your weeks and goals, and decide what's next."
+        case .reflect: "Find the meaning, lessons and vision in something that happened."
         case .assistant: "Hands-free: log your day, briefings, reminders."
         }
     }
@@ -160,6 +162,7 @@ enum CoachMode: String, Codable, CaseIterable, Identifiable {
         case .perspective: "arrow.uturn.backward.circle"
         case .why: "sparkles"
         case .review: "chart.line.uptrend.xyaxis"
+        case .reflect: "eye"
         case .assistant: "waveform"
         }
     }

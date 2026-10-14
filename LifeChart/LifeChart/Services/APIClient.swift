@@ -9,7 +9,7 @@ enum APIError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notConfigured: "Set your server address and token in More → Server."
-        case .invalidURL: "The server address is not a valid URL."
+        case .invalidURL: "The server address must be an https:// address (your Cloudflare hostname)."
         case let .http(code, message): "Server error \(code): \(message)"
         }
     }
@@ -37,6 +37,17 @@ final class APIClient {
     var token: String {
         get { Keychain.read("apiToken") ?? "" }
         set { Keychain.write("apiToken", value: newValue.trimmingCharacters(in: .whitespacesAndNewlines)) }
+    }
+
+    /// Cloudflare Access service token (Zero Trust → Access → Service Auth).
+    var accessClientId: String {
+        get { Keychain.read("cfAccessClientId") ?? "" }
+        set { Keychain.write("cfAccessClientId", value: newValue.trimmingCharacters(in: .whitespacesAndNewlines)) }
+    }
+
+    var accessClientSecret: String {
+        get { Keychain.read("cfAccessClientSecret") ?? "" }
+        set { Keychain.write("cfAccessClientSecret", value: newValue.trimmingCharacters(in: .whitespacesAndNewlines)) }
     }
 
     var isConfigured: Bool { !serverURL.isEmpty && !token.isEmpty }
@@ -140,12 +151,17 @@ final class APIClient {
     private func makeRequest(_ method: String, _ path: String) throws -> URLRequest {
         guard isConfigured else { throw APIError.notConfigured }
         var base = serverURL
-        if !base.hasPrefix("http://") && !base.hasPrefix("https://") { base = "https://" + base }
+        if !base.contains("://") { base = "https://" + base }
         while base.hasSuffix("/") { base.removeLast() }
-        guard let url = URL(string: base + path) else { throw APIError.invalidURL }
+        // Everything goes through Cloudflare over HTTPS; plain HTTP is refused.
+        guard base.hasPrefix("https://"), let url = URL(string: base + path) else { throw APIError.invalidURL }
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        if !accessClientId.isEmpty, !accessClientSecret.isEmpty {
+            request.setValue(accessClientId, forHTTPHeaderField: "CF-Access-Client-Id")
+            request.setValue(accessClientSecret, forHTTPHeaderField: "CF-Access-Client-Secret")
+        }
         return request
     }
 

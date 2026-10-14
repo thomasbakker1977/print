@@ -334,7 +334,7 @@ def test_coach_disabled_without_key():
     assert response.status_code == 503
 
 
-@pytest.mark.parametrize("mode", ["talk", "perspective", "why", "review"])
+@pytest.mark.parametrize("mode", ["talk", "perspective", "why", "review", "reflect", "assistant"])
 def test_every_mode_has_a_prompt(mode):
     coach, _ = fake_coach([])
     blocks = coach.system_blocks(mode, "ctx")

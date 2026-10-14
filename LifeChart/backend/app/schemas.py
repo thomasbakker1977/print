@@ -160,7 +160,7 @@ class Profile(BaseModel):
     myWhy: str = Field(default="", max_length=4000)
 
 
-CoachMode = Literal["talk", "perspective", "why", "review", "assistant"]
+CoachMode = Literal["talk", "perspective", "why", "review", "reflect", "assistant"]
 
 
 class ImageAttachment(BaseModel):
