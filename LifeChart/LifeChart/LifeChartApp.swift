@@ -87,16 +87,6 @@ struct LifeChartApp: App {
             .environmentObject(AppRouter.shared)
             .environmentObject(SyncService.shared)
             .environmentObject(AgendaService.shared)
-            // Hide health data in the app switcher.
-            .overlay {
-                if scenePhase != .active {
-                    ZStack {
-                        Color(.systemBackground)
-                        Image(systemName: "lock.fill").font(.largeTitle).foregroundStyle(.secondary)
-                    }
-                    .ignoresSafeArea()
-                }
-            }
         }
         .modelContainer(container)
         .onChange(of: scenePhase) { _, phase in

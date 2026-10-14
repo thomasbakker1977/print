@@ -3,8 +3,23 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var router: AppRouter
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
+        tabs
+            // Hide health data in the app-switcher snapshot.
+            .overlay {
+                if scenePhase == .background {
+                    ZStack {
+                        Color(.systemBackground)
+                        Image(systemName: "lock.fill").font(.largeTitle).foregroundStyle(.secondary)
+                    }
+                    .ignoresSafeArea()
+                }
+            }
+    }
+
+    private var tabs: some View {
         TabView(selection: $router.tab) {
             LogView()
                 .tabItem { Label("Today", systemImage: "square.and.pencil") }
