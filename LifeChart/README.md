@@ -39,6 +39,10 @@ iPhone ──HTTPS──▶ Cloudflare Access ──Tunnel──▶ cloudflared 
 
 ## 1. Backend in the homelab
 
+> **Automated option:** `infra/` contains the same setup as code — Terraform
+> for Cloudflare, a GitLab pipeline for gitlab01, secrets in Vault. See
+> [`infra/README.md`](infra/README.md). The manual steps below do the same by hand.
+
 Requirements: Docker with Compose, a domain on Cloudflare, an Anthropic API
 key.
 

@@ -85,6 +85,26 @@ jobs:
           name: simulator-diagnostics
           path: diagnostics
 
+  terraform:
+    name: Terraform validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: LifeChart/infra/terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate
+      - name: GitLab CI file and scripts
+        working-directory: LifeChart
+        run: |
+          python3 -c "import yaml; yaml.safe_load(open('.gitlab-ci.yml'))"
+          shellcheck infra/vault/setup.sh infra/deploy/deploy.sh infra/bootstrap-gitlab.sh
+
   backend:
     name: Backend tests
     runs-on: ubuntu-latest

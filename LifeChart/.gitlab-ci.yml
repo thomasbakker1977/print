@@ -1,0 +1,111 @@
+# LifeChart pipeline on gitlab01.
+#
+#   validate  → Terraform fmt/validate, backend tests        (every push / MR)
+#   plan      → terraform plan against Cloudflare + Vault      (main)
+#   apply     → terraform apply                    (main, manual: click ▶)
+#   deploy    → backend + cloudflared on the homelab runner   (main, after apply)
+#
+# Secrets come from Vault through GitLab's JWT (id_tokens); nothing secret is
+# stored in GitLab CI/CD variables. Required (non-secret) project variables:
+#   VAULT_ADDR, TF_VAR_cloudflare_account_id, TF_VAR_access_team_domain
+# Optional: VAULT_CACERT (File variable with your Vault CA), TF_VAR_admin_emails
+# (JSON list), LIFECHART_DIR (default /opt/lifechart).
+
+stages: [validate, plan, apply, deploy]
+
+variables:
+  TF_ROOT: infra/terraform
+  TF_STATE_NAME: lifechart
+  TF_IN_AUTOMATION: "true"
+  TF_HTTP_ADDRESS: ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}
+  TF_HTTP_LOCK_ADDRESS: ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock
+  TF_HTTP_UNLOCK_ADDRESS: ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}/lock
+  TF_HTTP_LOCK_METHOD: POST
+  TF_HTTP_UNLOCK_METHOD: DELETE
+  TF_HTTP_USERNAME: gitlab-ci-token
+  TF_HTTP_PASSWORD: ${CI_JOB_TOKEN}
+  TF_HTTP_RETRY_WAIT_MIN: "5"
+  VAULT_VERSION: "1.17.6"
+  VAULT_KV_MOUNT: secret
+  VAULT_AUTH_PATH: jwt-gitlab
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+
+.terraform:
+  image:
+    name: hashicorp/terraform:1.9.8
+    entrypoint: [""]
+  before_script:
+    - cd "$TF_ROOT"
+
+# Jobs that talk to Vault get a JWT for it and log in with their role.
+.vault:
+  id_tokens:
+    VAULT_ID_TOKEN:
+      aud: $VAULT_ADDR
+
+.vault_login: &vault_login
+  - wget -qO /tmp/vault.zip "https://releases.hashicorp.com/vault/${VAULT_VERSION}/vault_${VAULT_VERSION}_linux_amd64.zip"
+  - unzip -oq /tmp/vault.zip -d /usr/local/bin && rm /tmp/vault.zip
+  - export VAULT_TOKEN="$(vault write -field=token "auth/${VAULT_AUTH_PATH}/login" role=lifechart-terraform jwt="$VAULT_ID_TOKEN")"
+
+.main_only:
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+terraform:validate:
+  extends: .terraform
+  stage: validate
+  script:
+    - terraform fmt -check -recursive
+    - terraform init -backend=false -input=false
+    - terraform validate
+
+backend:test:
+  stage: validate
+  image: python:3.13-slim
+  script:
+    - cd backend
+    - pip install --quiet -r requirements.txt pytest httpx
+    - python -m pytest -q
+
+terraform:plan:
+  extends: [.terraform, .vault, .main_only]
+  stage: plan
+  resource_group: lifechart-terraform
+  script:
+    - *vault_login
+    - terraform init -input=false
+    - terraform plan -input=false -lock-timeout=60s
+
+terraform:apply:
+  extends: [.terraform, .vault, .main_only]
+  stage: apply
+  resource_group: lifechart-terraform
+  needs: ["terraform:plan"]
+  when: manual
+  allow_failure: false
+  environment:
+    name: homelab
+  script:
+    - *vault_login
+    - terraform init -input=false
+    - terraform apply -input=false -auto-approve -lock-timeout=60s
+
+deploy:homelab:
+  extends: [.vault, .main_only]
+  stage: deploy
+  needs: ["terraform:apply"]
+  tags: [homelab]
+  resource_group: lifechart-deploy
+  environment:
+    name: homelab
+    url: https://lifechart.datafor.business
+  script:
+    - infra/deploy/deploy.sh
