@@ -33,6 +33,54 @@ jobs:
             | tee build.log | grep -E "error:|warning:|BUILD (SUCCEEDED|FAILED)" || true
           grep -q "BUILD SUCCEEDED" build.log
 
+  simulator:
+    name: Launch in iPhone simulator
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build for simulator
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project LifeChart/LifeChart.xcodeproj \
+            -target LifeChart \
+            -sdk iphonesimulator \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            SYMROOT="$PWD/build" | tail -3
+      - name: Boot simulator, install and launch
+        run: |
+          DEVICE=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next(x['udid'] for r,l in d.items() if 'iOS' in r for x in l if x['name'].startswith('iPhone')))")
+          echo "DEVICE=$DEVICE" >> "$GITHUB_ENV"
+          xcrun simctl boot "$DEVICE"
+          xcrun simctl bootstatus "$DEVICE" -b
+          xcrun simctl install "$DEVICE" build/Debug-iphonesimulator/LifeChart.app
+          xcrun simctl launch "$DEVICE" nl.lifechart.app
+          sleep 20
+      - name: Diagnose
+        if: always()
+        run: |
+          mkdir -p diagnostics
+          xcrun simctl io "$DEVICE" screenshot diagnostics/launch.png || true
+          PID=$(pgrep -f "LifeChart.app/LifeChart" | head -1 || true)
+          echo "LifeChart pid: ${PID:-not running}"
+          if [ -n "$PID" ]; then
+            ps -o pid,%cpu,rss,stat -p "$PID"
+            sample "$PID" 3 -file diagnostics/sample.txt >/dev/null 2>&1 || true
+            echo "===== main thread ====="
+            awk '/Thread_[0-9]+.*DispatchQueue_1: com.apple.main-thread/,/^ *$/' diagnostics/sample.txt | head -120
+          fi
+          echo "===== app log ====="
+          xcrun simctl spawn "$DEVICE" log show --last 2m --style compact \
+            --predicate 'process == "LifeChart"' 2>/dev/null | grep -viE "CA Event|effective user settings" | tail -80 || true
+          echo "===== crash reports ====="
+          ls ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -i lifechart || echo "none"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: simulator-diagnostics
+          path: diagnostics
+
   backend:
     name: Backend tests
     runs-on: ubuntu-latest
