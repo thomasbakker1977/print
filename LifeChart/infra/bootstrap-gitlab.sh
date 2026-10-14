@@ -5,9 +5,9 @@
 #   LifeChart/infra/bootstrap-gitlab.sh
 #
 # It asks for anything not set as an environment variable: GITLAB_URL,
-# GITLAB_TOKEN (personal access token with the "api" scope), VAULT_ADDR,
-# CF_ACCOUNT_ID and ACCESS_TEAM_DOMAIN. ~/ipa-ca.pem is used as CA bundle for
-# gitlab01 and Vault when it exists.
+# GITLAB_TOKEN (personal access token with the "api" scope) and VAULT_ADDR.
+# Cloudflare settings live in Vault (lifechart/ci), not in GitLab.
+# ~/ipa-ca.pem is used as CA bundle for gitlab01 and Vault when it exists.
 #
 # Optional: GITLAB_NAMESPACE (group path; default your user), PROJECT_NAME
 # (default lifechart), GITLAB_CA_PEM (CA certificate of gitlab01 if it uses an
@@ -35,8 +35,6 @@ if [ -f "$HOME/ipa-ca.pem" ]; then default_ca="$HOME/ipa-ca.pem"; fi
 ask GITLAB_URL "GitLab URL" "https://gitlab01.corp.datafor.business"
 ask GITLAB_TOKEN "GitLab personal access token (api scope, input hidden)" "" secret
 ask VAULT_ADDR "Vault address" "https://vault.corp.datafor.business:8200"
-ask CF_ACCOUNT_ID "Cloudflare account ID (32 characters)"
-ask ACCESS_TEAM_DOMAIN "Cloudflare Zero Trust team domain (e.g. myteam.cloudflareaccess.com)"
 if [ -n "$default_ca" ]; then
   GITLAB_CA_PEM="${GITLAB_CA_PEM:-$default_ca}"
   VAULT_CA_PEM="${VAULT_CA_PEM:-$default_ca}"
@@ -44,7 +42,7 @@ fi
 GITLAB_URL="${GITLAB_URL%/}"
 PROJECT_NAME="${PROJECT_NAME:-lifechart}"
 
-for name in GITLAB_TOKEN CF_ACCOUNT_ID ACCESS_TEAM_DOMAIN VAULT_ADDR; do
+for name in GITLAB_TOKEN VAULT_ADDR; do
   case "${!name}" in
     *"<"*|*">"*) echo "Replace the placeholder in $name with your real value." >&2; exit 1 ;;
   esac
@@ -89,7 +87,8 @@ fi
 project_id="$(echo "$project_json" | json "['id']")"
 http_url="$(echo "$project_json" | json "['http_url_to_repo']")"
 
-# 2. CI/CD variables (none of these are secrets; secrets live in Vault)
+# 2. CI/CD variables (none of these are secrets; secrets and Cloudflare
+#    settings live in Vault)
 set_variable() {
   local key="$1" value="$2" type="${3:-env_var}"
   api PUT "/projects/$project_id/variables/$key" --data-urlencode "value=$value" \
@@ -99,8 +98,6 @@ set_variable() {
   echo "  variable $key set"
 }
 set_variable VAULT_ADDR "$VAULT_ADDR"
-set_variable TF_VAR_cloudflare_account_id "$CF_ACCOUNT_ID"
-set_variable TF_VAR_access_team_domain "$ACCESS_TEAM_DOMAIN"
 if [ -n "${VAULT_CA_PEM:-}" ]; then
   set_variable VAULT_CACERT "$(cat "$VAULT_CA_PEM")" file
 fi

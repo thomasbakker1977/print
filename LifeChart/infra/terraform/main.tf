@@ -15,14 +15,14 @@ resource "random_id" "tunnel_secret" {
 }
 
 resource "cloudflare_zero_trust_tunnel_cloudflared" "lifechart" {
-  account_id = var.cloudflare_account_id
+  account_id = local.cloudflare_account_id
   name       = "lifechart"
   secret     = random_id.tunnel_secret.b64_std
   config_src = "cloudflare"
 }
 
 resource "cloudflare_zero_trust_tunnel_cloudflared_config" "lifechart" {
-  account_id = var.cloudflare_account_id
+  account_id = local.cloudflare_account_id
   tunnel_id  = cloudflare_zero_trust_tunnel_cloudflared.lifechart.id
 
   config {
@@ -49,7 +49,7 @@ resource "cloudflare_record" "lifechart" {
 # --- Access -----------------------------------------------------------------
 
 resource "cloudflare_zero_trust_access_service_token" "iphone" {
-  account_id = var.cloudflare_account_id
+  account_id = local.cloudflare_account_id
   name       = "lifechart-iphone"
   duration   = var.service_token_duration
 }

@@ -72,11 +72,13 @@ cat <<DONE
 Vault is ready. Now store your secrets (run these yourself; never commit them):
 
   vault kv put -mount=${KV_MOUNT} lifechart/ci \\
-      cloudflare_api_token='<Cloudflare API token>'
+      cloudflare_api_token='…' \\
+      cloudflare_account_id='…' \\
+      access_team_domain='yourteam.cloudflareaccess.com'
 
   vault kv put -mount=${KV_MOUNT} lifechart/app \\
       lifechart_api_token="\$(openssl rand -hex 32)" \\
-      anthropic_api_key='<Anthropic API key>'
+      anthropic_api_key='…'
 
   # optional, only if you do not use the interactive Garmin login:
   vault kv patch -mount=${KV_MOUNT} lifechart/app garmin_email='…' garmin_password='…'

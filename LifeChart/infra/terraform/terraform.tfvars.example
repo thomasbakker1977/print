@@ -1,5 +1,3 @@
-# For local runs only; the GitLab pipeline sets these as TF_VAR_* variables.
-# Secrets are NOT set here: they come from Vault.
-cloudflare_account_id = "0123456789abcdef0123456789abcdef"
-access_team_domain    = "myteam.cloudflareaccess.com"
-admin_emails          = []
+# For local runs only. Everything secret or account-specific (Cloudflare API
+# token, account ID, Zero Trust team domain) comes from Vault: lifechart/ci.
+admin_emails = []

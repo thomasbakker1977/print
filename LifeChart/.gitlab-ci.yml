@@ -5,9 +5,8 @@
 #   apply     → terraform apply                    (main, manual: click ▶)
 #   deploy    → backend + cloudflared on the homelab runner   (main, after apply)
 #
-# Secrets come from Vault through GitLab's JWT (id_tokens); nothing secret is
-# stored in GitLab CI/CD variables. Required (non-secret) project variables:
-#   VAULT_ADDR, TF_VAR_cloudflare_account_id, TF_VAR_access_team_domain
+# Secrets and Cloudflare account settings come from Vault through GitLab's
+# JWT (id_tokens); GitLab only needs the project variable VAULT_ADDR.
 # Optional: VAULT_CACERT (File variable with your Vault CA), TF_VAR_admin_emails
 # (JSON list), LIFECHART_DIR (default /opt/lifechart).
 

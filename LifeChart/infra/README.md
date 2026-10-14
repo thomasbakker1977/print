@@ -33,7 +33,7 @@ The homelab runner, CI job containers and Vault itself must resolve the
 
 | Path | Written by | Keys |
 |---|---|---|
-| `secret/lifechart/ci` | you | `cloudflare_api_token` |
+| `secret/lifechart/ci` | you | `cloudflare_api_token`, `cloudflare_account_id`, `access_team_domain` |
 | `secret/lifechart/app` | you | `lifechart_api_token`, `anthropic_api_key`, optional `garmin_email`, `garmin_password` |
 | `secret/lifechart/cloudflare` | Terraform | `server_url`, `tunnel_token`, `access_aud`, `access_team_domain`, `iphone_client_id`, `iphone_client_secret` |
 
@@ -53,17 +53,15 @@ Cloudflare dashboard → My Profile → API Tokens → Create → Custom token:
 - Account · Access: Service Tokens · Edit
 - Zone · DNS · Edit, and Zone · Zone · Read, for zone `datafor.business`
 
-Also note your **account ID** and Zero Trust **team domain**
-(`<team>.cloudflareaccess.com`).
+Also note your **account ID** (domain → Overview, right column) and Zero
+Trust **team domain** (`yourteam.cloudflareaccess.com`, Zero Trust → Settings →
+Custom Pages). All three go into Vault in step 3.
 
 ### 2. GitLab project (once, from your Mac)
 Create a personal access token on gitlab01 with the `api` scope, then in the
 cloned `print` repository:
 ```bash
-GITLAB_URL=https://gitlab01.corp.datafor.business GITLAB_TOKEN=… \
-VAULT_ADDR=https://vault.corp.datafor.business:8200 CF_ACCOUNT_ID=… \
-ACCESS_TEAM_DOMAIN=<team>.cloudflareaccess.com \
-  LifeChart/infra/bootstrap-gitlab.sh
+LifeChart/infra/bootstrap-gitlab.sh
 ```
 It creates the private project, prints its path (for step 3), and prints how to
 register the homelab runner (shell executor, in the `docker` group, with
@@ -79,7 +77,9 @@ GITLAB_URL=https://gitlab01.corp.datafor.business GITLAB_PROJECT=<user-or-group>
 ```
 Then store your secrets as the script prints:
 ```bash
-vault kv put -mount=secret lifechart/ci cloudflare_api_token='…'
+vault kv put -mount=secret lifechart/ci \
+  cloudflare_api_token='…' cloudflare_account_id='…' \
+  access_team_domain='yourteam.cloudflareaccess.com'
 vault kv put -mount=secret lifechart/app \
   lifechart_api_token="$(openssl rand -hex 32)" anthropic_api_key='…'
 ```
