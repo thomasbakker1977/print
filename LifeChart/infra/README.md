@@ -44,7 +44,21 @@ Cloudflare dashboard → My Profile → API Tokens → Create → Custom token:
 Also note your **account ID** and Zero Trust **team domain**
 (`<team>.cloudflareaccess.com`).
 
-### 2. Vault (once, as a Vault admin)
+### 2. GitLab project (once, from your Mac)
+Create a personal access token on gitlab01 with the `api` scope, then in the
+cloned `print` repository:
+```bash
+GITLAB_URL=https://gitlab01.<your-lan> GITLAB_TOKEN=… \
+VAULT_ADDR=https://<your-vault>:8200 CF_ACCOUNT_ID=… \
+ACCESS_TEAM_DOMAIN=<team>.cloudflareaccess.com \
+  LifeChart/infra/bootstrap-gitlab.sh
+```
+It creates the private project, prints its path (for step 3), and prints how to
+register the homelab runner (shell executor, in the `docker` group, with
+`rsync`) and prepare `/opt/lifechart`. If gitlab01 uses an internal CA, add
+`GITLAB_CA_PEM=/path/to/ca.pem`.
+
+### 3. Vault (once, as a Vault admin)
 ```bash
 export VAULT_ADDR=https://<your-vault>:8200
 vault login
@@ -59,18 +73,6 @@ vault kv put -mount=secret lifechart/app \
 ```
 If gitlab01 uses a private CA, pass `GITLAB_CA_PEM=/path/ca.pem` so Vault can
 verify its JWT keys.
-
-### 3. GitLab project (once, from your Mac)
-Create a personal access token on gitlab01 with the `api` scope, then in the
-cloned `print` repository:
-```bash
-GITLAB_URL=https://gitlab01.<your-lan> GITLAB_TOKEN=… \
-VAULT_ADDR=https://<your-vault>:8200 CF_ACCOUNT_ID=… \
-ACCESS_TEAM_DOMAIN=<team>.cloudflareaccess.com \
-  LifeChart/infra/bootstrap-gitlab.sh
-```
-It prints how to register the homelab runner (shell executor, in the `docker`
-group, with `rsync`) and prepare `/opt/lifechart`.
 
 ### 4. Run the pipeline
 On gitlab01: **CI/CD → Pipelines** on `main`. Review `terraform:plan`, click ▶

@@ -10,7 +10,8 @@
 #   LifeChart/infra/bootstrap-gitlab.sh
 #
 # Optional: GITLAB_NAMESPACE (group path; default your user), PROJECT_NAME
-# (default lifechart), VAULT_CA_PEM (path to your Vault CA certificate).
+# (default lifechart), GITLAB_CA_PEM (CA certificate of gitlab01 if it uses an
+# internal CA), VAULT_CA_PEM (CA certificate of your Vault server).
 set -euo pipefail
 
 : "${GITLAB_URL:?}" "${GITLAB_TOKEN:?}" "${VAULT_ADDR:?}" "${CF_ACCOUNT_ID:?}" "${ACCESS_TEAM_DOMAIN:?}"
@@ -18,10 +19,17 @@ GITLAB_URL="${GITLAB_URL%/}"
 PROJECT_NAME="${PROJECT_NAME:-lifechart}"
 API="$GITLAB_URL/api/v4"
 
+curl_tls=()
+git_tls=()
+if [ -n "${GITLAB_CA_PEM:-}" ]; then
+  curl_tls=(--cacert "$GITLAB_CA_PEM")
+  git_tls=(-c "http.sslCAInfo=$GITLAB_CA_PEM")
+fi
+
 api() {
   local method="$1" path="$2"
   shift 2
-  curl --fail-with-body -sS -X "$method" -H "PRIVATE-TOKEN: $GITLAB_TOKEN" "$API$path" "$@"
+  curl --fail-with-body -sS ${curl_tls[@]+"${curl_tls[@]}"} -X "$method" -H "PRIVATE-TOKEN: $GITLAB_TOKEN" "$API$path" "$@"
 }
 json() { python3 -c "import json,sys; print(json.load(sys.stdin)$1)"; }
 urlencode() { python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$1"; }
@@ -39,11 +47,11 @@ if project_json="$(api GET "/projects/$(urlencode "$project_path")" 2>/dev/null)
 else
   project_json="$(api POST /projects --data-urlencode "name=$PROJECT_NAME" \
     --data-urlencode "visibility=private" --data-urlencode "initialize_with_readme=false" \
-    "${namespace_args[@]}")"
+    ${namespace_args[@]+"${namespace_args[@]}"})"
   echo "Created private project $project_path."
 fi
 project_id="$(echo "$project_json" | json "['id']")"
-ssh_url="$(echo "$project_json" | json "['ssh_url_to_repo']")"
+http_url="$(echo "$project_json" | json "['http_url_to_repo']")"
 
 # 2. CI/CD variables (none of these are secrets; secrets live in Vault)
 set_variable() {
@@ -71,12 +79,23 @@ runner_token="$(echo "$runner_json" | json "['token']")"
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 git subtree split --prefix=LifeChart -b lifechart-gitlab >/dev/null
-git push "$ssh_url" lifechart-gitlab:main
+# Push over HTTPS with the access token in a header (no SSH key needed, and the
+# token never ends up in a URL or the git config).
+auth="$(printf 'oauth2:%s' "$GITLAB_TOKEN" | base64 | tr -d '\n')"
+git ${git_tls[@]+"${git_tls[@]}"} -c credential.helper= -c "http.extraHeader=Authorization: Basic $auth" \
+  push "$http_url" lifechart-gitlab:main
 git branch -D lifechart-gitlab >/dev/null
 
 cat <<DONE
 
-Done. Next steps on the homelab (as root):
+Done. Project: $project_path
+
+Next:
+
+  0. Configure Vault for this project (see infra/README.md, step 3):
+       GITLAB_URL=$GITLAB_URL GITLAB_PROJECT=$project_path LifeChart/infra/vault/setup.sh
+
+  On the homelab (as root):
 
   1. Register the runner (shell executor):
        gitlab-runner register --non-interactive --url "$GITLAB_URL" \\
