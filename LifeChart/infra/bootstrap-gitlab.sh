@@ -2,19 +2,45 @@
 # Creates the private LifeChart project on gitlab01 and pushes the code.
 # Run once from your Mac (which can reach gitlab01), inside the cloned `print` repo:
 #
-#   GITLAB_URL=https://gitlab01.example.lan \
-#   GITLAB_TOKEN=<personal access token with "api" scope> \
-#   VAULT_ADDR=https://vault.example.lan:8200 \
-#   CF_ACCOUNT_ID=<Cloudflare account id> \
-#   ACCESS_TEAM_DOMAIN=<team>.cloudflareaccess.com \
 #   LifeChart/infra/bootstrap-gitlab.sh
+#
+# It asks for anything not set as an environment variable: GITLAB_URL,
+# GITLAB_TOKEN (personal access token with the "api" scope), VAULT_ADDR,
+# CF_ACCOUNT_ID and ACCESS_TEAM_DOMAIN. ~/ipa-ca.pem is used as CA bundle for
+# gitlab01 and Vault when it exists.
 #
 # Optional: GITLAB_NAMESPACE (group path; default your user), PROJECT_NAME
 # (default lifechart), GITLAB_CA_PEM (CA certificate of gitlab01 if it uses an
 # internal CA), VAULT_CA_PEM (CA certificate of your Vault server).
 set -euo pipefail
 
-: "${GITLAB_URL:?}" "${GITLAB_TOKEN:?}" "${VAULT_ADDR:?}" "${CF_ACCOUNT_ID:?}" "${ACCESS_TEAM_DOMAIN:?}"
+# Ask for anything not given as an environment variable.
+ask() {
+  local name="$1" prompt="$2" default="${3:-}" secret="${4:-}" value
+  if [ -n "${!name:-}" ]; then return; fi
+  if [ -n "$default" ]; then prompt="$prompt [$default]"; fi
+  if [ -n "$secret" ]; then
+    read -r -s -p "$prompt: " value; echo
+  else
+    read -r -p "$prompt: " value
+  fi
+  value="${value:-$default}"
+  if [ -z "$value" ]; then echo "$name is required." >&2; exit 1; fi
+  printf -v "$name" '%s' "$value"
+}
+
+default_ca=""
+if [ -f "$HOME/ipa-ca.pem" ]; then default_ca="$HOME/ipa-ca.pem"; fi
+
+ask GITLAB_URL "GitLab URL" "https://gitlab01.corp.datafor.business"
+ask GITLAB_TOKEN "GitLab personal access token (api scope, input hidden)" "" secret
+ask VAULT_ADDR "Vault address" "https://vault.corp.datafor.business:8200"
+ask CF_ACCOUNT_ID "Cloudflare account ID (32 characters)"
+ask ACCESS_TEAM_DOMAIN "Cloudflare Zero Trust team domain (e.g. myteam.cloudflareaccess.com)"
+if [ -n "$default_ca" ]; then
+  GITLAB_CA_PEM="${GITLAB_CA_PEM:-$default_ca}"
+  VAULT_CA_PEM="${VAULT_CA_PEM:-$default_ca}"
+fi
 GITLAB_URL="${GITLAB_URL%/}"
 PROJECT_NAME="${PROJECT_NAME:-lifechart}"
 
