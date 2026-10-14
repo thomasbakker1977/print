@@ -1,15 +1,21 @@
+# LifeChart in the homelab, reachable only through Cloudflare.
+#
+#   iPhone ──HTTPS──▶ Cloudflare (Access) ──Tunnel──▶ cloudflared ──▶ lifechart:8080
+#
+# No ports are published on the host; cloudflared makes an outbound connection.
+
 services:
   lifechart:
     build: .
     container_name: lifechart
     restart: unless-stopped
     env_file: .env
-    # Only reachable from this host by default. Put HTTPS in front of it
-    # (Tailscale Serve or your reverse proxy); never port-forward it directly.
-    ports:
-      - "${LIFECHART_BIND:-127.0.0.1}:8080:8080"
+    expose:
+      - "8080"
     volumes:
       - ./data:/data
+    networks:
+      - lifechart
     read_only: true
     tmpfs:
       - /tmp
@@ -17,3 +23,23 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+
+  cloudflared:
+    image: cloudflare/cloudflared:2024.12.2
+    container_name: lifechart-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?Set CLOUDFLARE_TUNNEL_TOKEN in .env}
+    depends_on:
+      - lifechart
+    networks:
+      - lifechart
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  lifechart:

@@ -457,3 +457,42 @@ def test_profile_name_reaches_coach():
     db = Database(":memory:")
     db.set_setting("name", "Sam")
     assert "The user's name is Sam" in build_context(db, date.today(), None, "", False)
+
+
+def test_cloudflare_access_is_enforced_when_configured():
+    class Verifier:
+        def verify(self, token):
+            return token == "good-jwt"
+
+    app = create_app(Database(":memory:"), TOKEN, None, garmin_interval_minutes=0, access=Verifier())
+    client = TestClient(app)
+    assert client.get("/api/status", headers=AUTH).status_code == 403
+    ok = {**AUTH, "Cf-Access-Jwt-Assertion": "good-jwt"}
+    assert client.get("/api/status", headers=ok).status_code == 200
+    assert client.get("/health").status_code == 200
+
+
+def test_access_verifier_checks_signature_audience_and_issuer():
+    import jwt as pyjwt
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    from app.cloudflare import AccessVerifier
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    verifier = AccessVerifier("team.cloudflareaccess.com", "aud-123")
+    verifier._keys = SimpleNamespace(
+        get_signing_key_from_jwt=lambda token: SimpleNamespace(key=key.public_key())
+    )
+
+    def token(**claims):
+        base = {"aud": "aud-123", "iss": "https://team.cloudflareaccess.com", "exp": 4_000_000_000}
+        return pyjwt.encode({**base, **claims}, key, algorithm="RS256")
+
+    assert verifier.verify(token())
+    assert not verifier.verify(token(aud="other"))
+    assert not verifier.verify(token(iss="https://evil.example"))
+    assert not verifier.verify(token(exp=1))
+    assert not verifier.verify(None)
+    other = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    forged = pyjwt.encode({"aud": "aud-123", "iss": "https://team.cloudflareaccess.com"}, other, algorithm="RS256")
+    assert not verifier.verify(forged)

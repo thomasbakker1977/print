@@ -15,11 +15,12 @@ import time
 from contextlib import asynccontextmanager
 from datetime import date
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from . import schemas
+from .cloudflare import AccessVerifier
 from .coach import Coach, CoachRefused, build_context, history_for_model
 from .db import Database
 from .garmin import GarminSync, run_periodically
@@ -74,6 +75,7 @@ def create_app(
     coach: Coach | None,
     garmin: GarminSync | None = None,
     garmin_interval_minutes: int = 240,
+    access: AccessVerifier | None = None,
 ) -> FastAPI:
     garmin = garmin or GarminSync(db, None, None, "")
     background: set[asyncio.Task] = set()
@@ -96,7 +98,12 @@ def create_app(
     )
     bearer = HTTPBearer(auto_error=False)
 
-    def authorize(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)) -> None:
+    def authorize(
+        credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+        cf_access_jwt_assertion: str | None = Header(default=None),
+    ) -> None:
+        if access is not None and not access.verify(cf_access_jwt_assertion):
+            raise HTTPException(status_code=403, detail="Request did not come through Cloudflare Access")
         if credentials is None or not hmac.compare_digest(
             credentials.credentials.encode(), api_token.encode()
         ):
@@ -360,10 +367,18 @@ def build_app() -> FastAPI:
 
         garmin = GarminSync(db, email, password, tokenstore, client_factory=Garmin)
 
+    access = None
+    team, audience = os.environ.get("CF_ACCESS_TEAM_DOMAIN"), os.environ.get("CF_ACCESS_AUD")
+    if team and audience:
+        access = AccessVerifier(team, audience)
+    else:
+        log.warning("CF_ACCESS_TEAM_DOMAIN/CF_ACCESS_AUD not set; Cloudflare Access is not enforced")
+
     return create_app(
         db,
         token,
         coach,
         garmin,
         garmin_interval_minutes=int(os.environ.get("GARMIN_SYNC_MINUTES", "240")),
+        access=access,
     )
