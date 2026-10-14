@@ -88,6 +88,9 @@ jobs:
   terraform:
     name: Terraform validate
     runs-on: ubuntu-latest
+    env:
+      # The Vault provider needs an address to validate; nothing is contacted.
+      VAULT_ADDR: https://vault.invalid:8200
     defaults:
       run:
         working-directory: LifeChart/infra/terraform
