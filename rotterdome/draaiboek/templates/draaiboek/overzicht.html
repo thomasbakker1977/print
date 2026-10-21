@@ -1,0 +1,50 @@
+{% extends "draaiboek/base.html" %}
+{% block titel %}Overzicht{% endblock %}
+{% block inhoud %}
+  <h1>Draaiboek Rotterdome</h1>
+  <p class="ondertitel">Activiteitenlijst op- en afbouw blaashal · seizoen 2026–2027</p>
+
+  {% if not hoofdstukken %}
+    <div class="kaart leeg-staat">
+      <h2>Nog geen draaiboek geïmporteerd</h2>
+      <p>Importeer het PDF-draaiboek vanaf de commandoregel:</p>
+      <pre>python manage.py importeer_draaiboek pad/naar/Draaiboek_Rotterdome_2026_takenlijst.pdf</pre>
+    </div>
+  {% else %}
+    <section class="kaart">
+      <h2>Totale voortgang</h2>
+      {% include "draaiboek/_voortgang.html" %}
+      <p class="links">
+        <a class="knop" href="{% url 'draaiboek:taken' %}">Alle open taken</a>
+        <a class="knop licht" href="{% url 'draaiboek:taken' %}?status=loopt">Onderhanden werk</a>
+        <a class="knop licht" href="{% url 'draaiboek:taken' %}?status=open&amp;wie=toewijzen">Nog toe te wijzen</a>
+      </p>
+    </section>
+
+    {% for h in hoofdstukken %}
+      <section class="kaart">
+        <h2>{{ h.hoofdstuk.titel }}</h2>
+        <ul class="sectielijst">
+          {% for item in h.secties %}
+            <li>
+              <a href="{{ item.sectie.get_absolute_url }}">{% if item.sectie.titel == h.hoofdstuk.titel %}{% if h.secties|length > 1 %}Inleiding{% else %}Bekijken{% endif %}{% else %}{{ item.sectie.titel }}{% endif %}</a>
+              {% if item.telling.totaal %}
+                {% with telling=item.telling %}
+                  <span class="mini-voortgang" title="{{ telling.procent }}% afgerond">
+                    <span class="balk">
+                      <span class="gereed" style="flex-grow: {{ telling.gereed }}"></span>
+                      <span class="nvt" style="flex-grow: {{ telling.nvt }}"></span>
+                      <span class="loopt" style="flex-grow: {{ telling.loopt }}"></span>
+                      <span class="open" style="flex-grow: {{ telling.open }}"></span>
+                    </span>
+                    <span class="tal">{{ telling.open }} open · {{ telling.totaal }} taken</span>
+                  </span>
+                {% endwith %}
+              {% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      </section>
+    {% endfor %}
+  {% endif %}
+{% endblock %}

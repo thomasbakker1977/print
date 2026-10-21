@@ -1,0 +1,53 @@
+{% load static %}<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block titel %}Draaiboek{% endblock %} · Rotterdome</title>
+  <link rel="stylesheet" href="{% static 'draaiboek/draaiboek.css' %}">
+</head>
+<body>
+  <header class="topbalk">
+    <button class="menu-knop" type="button" aria-label="Menu" onclick="document.body.classList.toggle('nav-open')">☰</button>
+    <a class="merk" href="{% url 'draaiboek:overzicht' %}">Draaiboek Rotterdome <span>2026–2027</span></a>
+    <nav class="topnav">
+      <a href="{% url 'draaiboek:overzicht' %}">Overzicht</a>
+      <a href="{% url 'draaiboek:taken' %}">Takenlijst</a>
+      <a href="{% url 'admin:index' %}">Beheer</a>
+      <button type="button" onclick="window.print()">Printen</button>
+    </nav>
+  </header>
+
+  <div class="layout">
+    <aside class="zijbalk">
+      {% for hoofdstuk in nav_hoofdstukken %}
+        {% with secties=hoofdstuk.secties.all %}
+          {% if secties|length == 1 and secties.0.titel == hoofdstuk.titel %}
+            <a class="nav-hoofdstuk {% if sectie.pk == secties.0.pk %}actief{% endif %}" href="{{ secties.0.get_absolute_url }}">{{ hoofdstuk.titel }}</a>
+          {% else %}
+            <div class="nav-hoofdstuk">{{ hoofdstuk.titel }}</div>
+            <ul>
+              {% for s in secties %}
+                <li><a href="{{ s.get_absolute_url }}" {% if sectie.pk == s.pk %}class="actief" aria-current="page"{% endif %}>{% if s.titel == hoofdstuk.titel %}Inleiding{% else %}{{ s.titel }}{% endif %}</a></li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+        {% endwith %}
+      {% empty %}
+        <p class="leeg">Nog geen draaiboek geïmporteerd.</p>
+      {% endfor %}
+    </aside>
+
+    <main class="inhoud">
+      {% block inhoud %}{% endblock %}
+    </main>
+  </div>
+
+  {% if wie_suggesties %}
+  <datalist id="wie-lijst">
+    {% for w in wie_suggesties %}<option value="{{ w }}">{% endfor %}
+  </datalist>
+  {% endif %}
+  <script src="{% static 'draaiboek/draaiboek.js' %}"></script>
+</body>
+</html>

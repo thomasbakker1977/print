@@ -1,0 +1,35 @@
+{% extends "draaiboek/base.html" %}
+{% block titel %}Takenlijst{% endblock %}
+{% block inhoud %}
+  <h1>Takenlijst</h1>
+
+  <form class="filters kaart compact" method="get">
+    <fieldset>
+      <legend>Status</legend>
+      {% for waarde, label in statussen %}
+        <label class="filter-status {{ waarde }}">
+          <input type="checkbox" name="status" value="{{ waarde }}" {% if waarde in gekozen_statussen %}checked{% endif %}> {{ label }}
+        </label>
+      {% endfor %}
+    </fieldset>
+    <label>Wie <input type="text" name="wie" value="{{ wie }}" list="wie-lijst" placeholder="bijv. Thomas"></label>
+    <label>Zoeken <input type="search" name="q" value="{{ zoek }}" placeholder="Zoek in taken"></label>
+    <label>Sectie
+      <select name="sectie">
+        <option value="">Alle secties</option>
+        {% for s in secties %}<option value="{{ s.slug }}" {% if s.slug == sectie_slug %}selected{% endif %}>{{ s.titel|truncatechars:60 }}</option>{% endfor %}
+      </select>
+    </label>
+    <button type="submit" class="knop">Filteren</button>
+  </form>
+
+  <p class="aantal">{{ taken|length }} taken gevonden</p>
+
+  <div class="takenlijst">
+    {% for taak in taken %}
+      {% include "draaiboek/_taak.html" with toon_sectie=True %}
+    {% empty %}
+      <p class="leeg">Geen taken met deze filters.</p>
+    {% endfor %}
+  </div>
+{% endblock %}

@@ -1,0 +1,57 @@
+{% extends "draaiboek/base.html" %}
+{% load static draaiboek_extras %}
+{% block titel %}{{ sectie.titel }}{% endblock %}
+{% block inhoud %}
+  <p class="kruimel">{{ sectie.hoofdstuk.titel }}</p>
+  <h1>{{ sectie.titel }}</h1>
+
+  {% if telling.totaal %}
+    <div class="kaart compact">{% include "draaiboek/_voortgang.html" %}</div>
+  {% endif %}
+
+  {% for blok in blokken %}
+    {% ifchanged blok.titel %}{% if blok.titel %}<h2 class="tussenkop">{{ blok.titel }}</h2>{% endif %}{% endifchanged %}
+
+    {% if blok.soort == "text" %}
+      <div class="tekst">{{ blok.data.text|tekst_html }}</div>
+
+    {% elif blok.soort == "info" %}
+      <dl class="dagkaart">
+        {% for rij in blok.data.rows %}
+          <div><dt>{{ rij.0 }}</dt><dd>{{ rij.1 }}</dd></div>
+        {% endfor %}
+      </dl>
+
+    {% elif blok.soort == "table" %}
+      <div class="tabel-scroll">
+        <table class="tabel">
+          <thead><tr>{% for kop in blok.data.header %}<th>{{ kop }}</th>{% endfor %}</tr></thead>
+          <tbody>
+            {% for rij in blok.data.rows %}
+              <tr>{% for cel in rij %}<td>{{ cel }}</td>{% endfor %}</tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+    {% elif blok.soort == "image" %}
+      <figure class="afbeelding">
+        <a href="{% get_media_prefix %}draaiboek/{{ blok.data.file }}" target="_blank" rel="noopener">
+          <img src="{% get_media_prefix %}draaiboek/{{ blok.data.file }}" alt="Afbeelding uit het draaiboek" loading="lazy">
+        </a>
+      </figure>
+
+    {% elif blok.soort == "tasks" %}
+      <div class="takenlijst">
+        {% for taak in blok.taken.all %}
+          {% include "draaiboek/_taak.html" %}
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endfor %}
+
+  <nav class="bladeren">
+    {% if vorige %}<a href="{{ vorige.get_absolute_url }}">← {{ vorige.titel }}</a>{% else %}<span></span>{% endif %}
+    {% if volgende %}<a href="{{ volgende.get_absolute_url }}">{{ volgende.titel }} →</a>{% endif %}
+  </nav>
+{% endblock %}

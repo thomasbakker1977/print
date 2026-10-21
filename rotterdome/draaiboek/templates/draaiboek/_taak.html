@@ -1,0 +1,45 @@
+{% load draaiboek_extras %}
+<article class="taak status-{{ taak.status }}" id="taak-{{ taak.pk }}">
+  <form method="post" action="{% url 'draaiboek:taak_bijwerken' taak.pk %}" data-taak-form>
+    {% csrf_token %}
+    <input type="hidden" name="next" value="{{ request.get_full_path }}">
+
+    <fieldset class="status-keuze">
+      <legend class="sr-only">Status</legend>
+      {% for waarde, label in statussen %}
+        <label class="optie {{ waarde }}" title="{{ label }}">
+          <input type="radio" name="status" value="{{ waarde }}" {% if taak.status == waarde %}checked{% endif %}>
+          <span>{% if waarde == 'open' %}☐{% elif waarde == 'loopt' %}<i class="sym-loopt" aria-hidden="true"></i>{% elif waarde == 'gereed' %}☑{% else %}—{% endif %}<small>{{ label }}</small></span>
+        </label>
+      {% endfor %}
+    </fieldset>
+
+    <div class="taak-body">
+      <div class="taak-kop">
+        {% if taak.nummer %}<span class="nummer">{{ taak.nummer }}</span>{% endif %}
+        {% if taak.tijd %}<span class="tijd">{{ taak.tijd }}</span>{% endif %}
+        <span class="omschrijving">{{ taak.omschrijving }}</span>
+        {% if toon_sectie %}<a class="sectie-link" href="{{ taak.blok.sectie.get_absolute_url }}#taak-{{ taak.pk }}">{{ taak.blok.sectie.titel }}</a>{% endif %}
+      </div>
+
+      {% if taak.details %}
+        <dl class="taak-details">
+          {% for kolom, waarde in taak.details %}{% if waarde %}
+            <div class="{{ kolom|kolom_klasse }}"><dt>{{ kolom }}</dt><dd>{{ waarde }}</dd></div>
+          {% endif %}{% endfor %}
+        </dl>
+      {% endif %}
+
+      <div class="taak-velden">
+        <label class="wie">Wie
+          <input type="text" name="wie" value="{{ taak.wie }}" list="wie-lijst" placeholder="Nog toewijzen" autocomplete="off">
+        </label>
+        <label class="opmerking">Opmerking / bijzonderheden
+          <textarea name="opmerking" rows="1" placeholder="Bijzonderheden voor volgend seizoen">{{ taak.opmerking }}</textarea>
+        </label>
+        <button type="submit" class="opslaan">Opslaan</button>
+        <span class="melding" aria-live="polite"></span>
+      </div>
+    </div>
+  </form>
+</article>

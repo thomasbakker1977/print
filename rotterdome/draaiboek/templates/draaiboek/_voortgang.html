@@ -1,0 +1,15 @@
+<div class="voortgang" data-voortgang>
+  <div class="balk" role="img" aria-label="{{ telling.procent }}% afgerond">
+    <span class="gereed" style="flex-grow: {{ telling.gereed }}"></span>
+    <span class="nvt" style="flex-grow: {{ telling.nvt }}"></span>
+    <span class="loopt" style="flex-grow: {{ telling.loopt }}"></span>
+    <span class="open" style="flex-grow: {{ telling.open }}"></span>
+  </div>
+  <div class="cijfers">
+    <strong data-procent>{{ telling.procent }}%</strong> afgerond ·
+    <span class="tel open">☐ <b data-n="open">{{ telling.open }}</b> open</span>
+    <span class="tel loopt"><i class="sym-loopt" aria-hidden="true"></i> <b data-n="loopt">{{ telling.loopt }}</b> loopt</span>
+    <span class="tel gereed">☑ <b data-n="gereed">{{ telling.gereed }}</b> gereed</span>
+    <span class="tel nvt">— <b data-n="nvt">{{ telling.nvt }}</b> n.v.t.</span>
+  </div>
+</div>
