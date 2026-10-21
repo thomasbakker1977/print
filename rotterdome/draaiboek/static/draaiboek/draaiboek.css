@@ -53,7 +53,7 @@ a.nav-hoofdstuk:hover { text-decoration: underline; }
 .zijbalk li a:hover { background: var(--achtergrond); }
 .zijbalk a.actief { background: #e5ebf6; color: var(--navy); font-weight: 600; }
 
-.inhoud { padding: 1.5rem 2rem 4rem; max-width: 1100px; width: 100%; }
+.inhoud { padding: 1.5rem 2rem 4rem; width: 100%; min-width: 0; }
 .ondertitel, .kruimel { color: var(--grijs); margin: 0 0 1.2rem; }
 .kruimel { margin: 0 0 .2rem; font-size: .9rem; }
 
@@ -89,7 +89,7 @@ pre { background: var(--achtergrond); padding: .7rem; border-radius: 6px; overfl
 
 /* Tekst, dagkaart, tabellen, afbeeldingen */
 .tussenkop { margin-top: 1.6rem; padding-bottom: .3rem; border-bottom: 2px solid var(--navy); }
-.tekst { margin: .6rem 0 1rem; }
+.tekst { margin: .6rem 0 1rem; max-width: 90ch; }  /* lopende tekst leesbaar houden, tabellen gebruiken de volle breedte */
 .tekst p { margin: .4rem 0; }
 .tekst ul { margin: .4rem 0; padding-left: 1.3rem; }
 
