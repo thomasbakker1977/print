@@ -10,19 +10,22 @@ def tekst_html(tekst):
     """Zet tekstregels uit de PDF om naar alinea's en opsommingen.
 
     Regels die met • beginnen zijn opsommingspunten; andere regels zijn het vervolg
-    van de vorige regel, tenzij die met een leesteken eindigde.
+    van de vorige regel, tenzij die met een leesteken eindigde of er een lege regel tussen staat.
     """
     stukken = []  # [("li" | "p", tekst)]
+    nieuwe_alinea = True
     for regel in (tekst or "").splitlines():
         regel = regel.strip()
         if not regel:
+            nieuwe_alinea = True  # een lege regel sluit de alinea af
             continue
         if regel.startswith("•"):
             stukken.append(["li", regel.lstrip("• ").strip()])
-        elif stukken and stukken[-1][1][-1:] not in ".:!?)":
+        elif not nieuwe_alinea and stukken[-1][1][-1:] not in ".:!?)":
             stukken[-1][1] += " " + regel
         else:
             stukken.append(["p", regel])
+        nieuwe_alinea = False
 
     html, lijst = [], []
     for soort, inhoud in stukken + [["einde", ""]]:

@@ -2,6 +2,16 @@ from django.db import models
 from django.urls import reverse
 
 
+# Kolomnamen uit de PDF-takenlijsten die naar een vast veld van Taak gaan; overige kolommen
+# (materiaal, notitie, bezetting, ...) komen in Taak.details
+KOLOMMEN_OMSCHRIJVING = {"Taak", "Actie", "Werkzaamheid", "Activiteit"}
+KOLOMMEN_NUMMER = {"#"}
+KOLOMMEN_TIJD = {"Tijd"}
+KOLOMMEN_WIE = {"Wie"}
+KOLOMMEN_OVERSLAAN = {"Status"}  # dubbel met het statussymbool
+VASTE_KOLOMMEN = KOLOMMEN_OMSCHRIJVING | KOLOMMEN_NUMMER | KOLOMMEN_TIJD | KOLOMMEN_WIE | KOLOMMEN_OVERSLAAN
+
+
 class Hoofdstuk(models.Model):
     titel = models.CharField(max_length=200)
     volgorde = models.PositiveIntegerField(default=0)
@@ -63,6 +73,19 @@ class Blok(models.Model):
 
     def __str__(self):
         return f"{self.sectie} · {self.get_soort_display()} {self.titel}".strip()
+
+    @property
+    def detail_kolommen(self):
+        """Kolommen van een takenlijst die als detail bij een taak horen (voor nieuwe taken)."""
+        return [k for k in self.data.get("columns", []) if k not in VASTE_KOLOMMEN]
+
+    @property
+    def heeft_nummer(self):
+        return bool(KOLOMMEN_NUMMER & set(self.data.get("columns", [])))
+
+    @property
+    def heeft_tijd(self):
+        return bool(KOLOMMEN_TIJD & set(self.data.get("columns", [])))
 
 
 class Taak(models.Model):

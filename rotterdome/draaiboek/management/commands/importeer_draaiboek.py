@@ -5,15 +5,18 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils.text import slugify
 
-from draaiboek.models import Blok, Hoofdstuk, Sectie, Taak
+from draaiboek.models import (
+    KOLOMMEN_NUMMER,
+    KOLOMMEN_OMSCHRIJVING,
+    KOLOMMEN_OVERSLAAN,
+    KOLOMMEN_TIJD,
+    KOLOMMEN_WIE,
+    Blok,
+    Hoofdstuk,
+    Sectie,
+    Taak,
+)
 from draaiboek.pdf_import import parse_pdf
-
-# Kolomnamen in de PDF die naar een vast veld van Taak gaan
-OMSCHRIJVING = {"Taak", "Actie", "Werkzaamheid", "Activiteit"}
-NUMMER = {"#"}
-TIJD = {"Tijd"}
-WIE = {"Wie"}
-OVERSLAAN = {"Status"}  # dubbel met het statussymbool
 
 
 class Command(BaseCommand):
@@ -77,15 +80,15 @@ class Command(BaseCommand):
         taak = Taak(blok=blok, volgorde=volgorde, status=task["status"])
         details = []
         for kolom, waarde in task["fields"]:
-            if kolom in OMSCHRIJVING:
+            if kolom in KOLOMMEN_OMSCHRIJVING:
                 taak.omschrijving = waarde
-            elif kolom in NUMMER:
+            elif kolom in KOLOMMEN_NUMMER:
                 taak.nummer = waarde
-            elif kolom in TIJD:
+            elif kolom in KOLOMMEN_TIJD:
                 taak.tijd = waarde
-            elif kolom in WIE:
+            elif kolom in KOLOMMEN_WIE:
                 taak.wie = waarde
-            elif kolom not in OVERSLAAN:
+            elif kolom not in KOLOMMEN_OVERSLAAN:
                 details.append([kolom, waarde])
         taak.details = details
         return taak

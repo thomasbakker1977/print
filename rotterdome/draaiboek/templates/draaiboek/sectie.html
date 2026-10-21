@@ -2,8 +2,13 @@
 {% load static draaiboek_extras %}
 {% block titel %}{{ sectie.titel }}{% endblock %}
 {% block inhoud %}
-  <p class="kruimel">{{ sectie.hoofdstuk.titel }}</p>
-  <h1>{{ sectie.titel }}</h1>
+  <div class="pagina-kop">
+    <div>
+      <p class="kruimel">{{ sectie.hoofdstuk.titel }}</p>
+      <h1>{{ sectie.titel }}</h1>
+    </div>
+    <a class="knop licht bewerk-knop" href="{% url 'draaiboek:sectie_bewerken' sectie.slug %}">✎ Bewerken</a>
+  </div>
 
   {% if telling.totaal %}
     <div class="kaart compact">{% include "draaiboek/_voortgang.html" %}</div>

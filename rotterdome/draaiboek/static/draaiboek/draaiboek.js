@@ -60,3 +60,48 @@ document.querySelectorAll(".taak-velden textarea").forEach((ta) => {
   ta.addEventListener("input", pas);
   pas();
 });
+
+// Bewerkscherm: rijen of taken toevoegen, verwijderen markeren en waarschuwen bij niet-opgeslagen wijzigingen
+function laatGroeien(ta) {
+  ta.style.height = "auto";
+  ta.style.height = ta.scrollHeight + 2 + "px";
+}
+
+const bewerkForm = document.querySelector("form[data-bewerk-form]");
+if (bewerkForm) {
+  let gewijzigd = false;
+  bewerkForm.addEventListener("input", () => { gewijzigd = true; });
+  bewerkForm.addEventListener("submit", () => { gewijzigd = false; });
+  window.addEventListener("beforeunload", (e) => {
+    if (gewijzigd) e.preventDefault();
+  });
+
+  bewerkForm.querySelectorAll("textarea[data-groei]").forEach(laatGroeien);
+  bewerkForm.addEventListener("input", (e) => {
+    if (e.target.matches("textarea[data-groei]")) laatGroeien(e.target);
+  });
+
+  bewerkForm.addEventListener("change", (e) => {
+    if (!e.target.matches("[data-verwijder]")) return;
+    const doel = e.target.closest("tr, .bewerk-taak, [data-blok]");
+    doel.classList.toggle("wordt-verwijderd", e.target.checked);
+    gewijzigd = true;
+  });
+
+  bewerkForm.querySelectorAll("[data-voeg-toe]").forEach((knop) => {
+    knop.addEventListener("click", () => {
+      const blok = knop.closest("[data-blok]");
+      const rijen = blok.querySelector("[data-rijen]");
+      const sjabloon = blok.querySelector("template[data-nieuwe-rij]");
+      const n = Number(rijen.dataset.volgende);
+      rijen.dataset.volgende = n + 1;
+      const html = sjabloon.innerHTML.replaceAll("__N__", String(n));
+      rijen.insertAdjacentHTML("beforeend", html);
+      const nieuw = rijen.lastElementChild;
+      nieuw.querySelectorAll("textarea[data-groei]").forEach(laatGroeien);
+      const eerste = nieuw.querySelector("textarea, input[type=text]");
+      if (eerste) eerste.focus();
+      gewijzigd = true;
+    });
+  });
+}

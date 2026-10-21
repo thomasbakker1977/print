@@ -1,0 +1,122 @@
+{% extends "draaiboek/base.html" %}
+{% load static %}
+{% block titel %}Bewerken: {{ sectie.titel }}{% endblock %}
+{% block inhoud %}
+<form method="post" class="bewerk-form" data-bewerk-form>
+  {% csrf_token %}
+
+  <div class="bewerk-balk">
+    <span>Je bewerkt deze pagina</span>
+    <a class="knop licht" href="{{ sectie.get_absolute_url }}">Annuleren</a>
+    <button type="submit" class="knop">Opslaan</button>
+  </div>
+
+  <p class="kruimel">{{ sectie.hoofdstuk.titel }}</p>
+  <label class="veld-titel">Paginatitel
+    <input type="text" name="sectie-titel" value="{{ sectie.titel }}" required>
+  </label>
+
+  {% for blok in blokken %}
+    <section class="bewerk-blok" data-blok>
+      <div class="blok-kop">
+        <span class="soort">{{ blok.get_soort_display }}</span>
+        <label>Tussenkop
+          <input type="text" name="blok-{{ blok.pk }}-titel" value="{{ blok.titel }}" placeholder="(geen tussenkop)">
+        </label>
+        <label class="verwijder"><input type="checkbox" name="blok-{{ blok.pk }}-del" data-verwijder> Blok verwijderen</label>
+      </div>
+
+      {% if blok.soort == "text" %}
+        <textarea name="blok-{{ blok.pk }}-text" rows="4" data-groei>{{ blok.data.text }}</textarea>
+        <p class="hint">Begin een regel met • voor een opsommingsteken. Een lege regel begint een nieuwe alinea.</p>
+
+      {% elif blok.soort == "info" or blok.soort == "table" %}
+        <div class="tabel-scroll">
+          <table class="tabel bewerk-tabel">
+            {% if blok.soort == "table" %}
+              <thead><tr>
+                {% for kop in blok.data.header %}
+                  <th><input type="text" name="blok-{{ blok.pk }}-h{{ forloop.counter0 }}" value="{{ kop }}"></th>
+                {% endfor %}
+                <th class="actie"></th>
+              </tr></thead>
+            {% endif %}
+            <tbody data-rijen data-volgende="{{ blok.data.rows|length }}">
+              {% for rij in blok.data.rows %}
+                {% with r=forloop.counter0 %}
+                <tr>
+                  {% for cel in rij %}
+                    <td><textarea name="blok-{{ blok.pk }}-r{{ r }}-c{{ forloop.counter0 }}" rows="1" data-groei>{{ cel }}</textarea></td>
+                  {% endfor %}
+                  <td class="actie"><label title="Rij verwijderen"><input type="checkbox" name="blok-{{ blok.pk }}-r{{ r }}-del" data-verwijder> ✕</label></td>
+                </tr>
+                {% endwith %}
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <template data-nieuwe-rij>
+          <tr>
+            {% if blok.soort == "info" %}
+              <td><textarea name="blok-{{ blok.pk }}-r__N__-c0" rows="1" data-groei></textarea></td>
+              <td><textarea name="blok-{{ blok.pk }}-r__N__-c1" rows="1" data-groei></textarea></td>
+            {% else %}
+              {% for kop in blok.data.header %}
+                <td><textarea name="blok-{{ blok.pk }}-r__N__-c{{ forloop.counter0 }}" rows="1" data-groei></textarea></td>
+              {% endfor %}
+            {% endif %}
+            <td class="actie"><label title="Rij verwijderen"><input type="checkbox" name="blok-{{ blok.pk }}-r__N__-del" data-verwijder> ✕</label></td>
+          </tr>
+        </template>
+        <button type="button" class="knop licht klein" data-voeg-toe>+ Rij toevoegen</button>
+
+      {% elif blok.soort == "image" %}
+        <img class="bewerk-afbeelding" src="{% get_media_prefix %}draaiboek/{{ blok.data.file }}" alt="Afbeelding uit het draaiboek">
+
+      {% elif blok.soort == "tasks" %}
+        {% for kolom in blok.detail_kolommen %}<input type="hidden" name="blok-{{ blok.pk }}-dlabel" value="{{ kolom }}">{% endfor %}
+        <div class="bewerk-taken" data-rijen data-volgende="0">
+          {% for taak in blok.taken.all %}
+            <div class="bewerk-taak">
+              <div class="rij-velden">
+                {% if blok.heeft_nummer or taak.nummer %}
+                  <label class="smal">#<input type="text" name="taak-{{ taak.pk }}-nummer" value="{{ taak.nummer }}"></label>
+                {% endif %}
+                {% if blok.heeft_tijd or taak.tijd %}
+                  <label class="middel">Tijd<input type="text" name="taak-{{ taak.pk }}-tijd" value="{{ taak.tijd }}"></label>
+                {% endif %}
+                <label class="breed">Taak<textarea name="taak-{{ taak.pk }}-omschrijving" rows="1" data-groei required>{{ taak.omschrijving }}</textarea></label>
+                <label class="verwijder"><input type="checkbox" name="taak-{{ taak.pk }}-del" data-verwijder> Verwijderen</label>
+              </div>
+              {% for kolom, waarde in taak.details %}
+                <label class="detail">{{ kolom }}<textarea name="taak-{{ taak.pk }}-d{{ forloop.counter0 }}" rows="1" data-groei>{{ waarde }}</textarea></label>
+              {% endfor %}
+            </div>
+          {% endfor %}
+        </div>
+        <template data-nieuwe-rij>
+          <div class="bewerk-taak nieuw">
+            <div class="rij-velden">
+              {% if blok.heeft_nummer %}<label class="smal">#<input type="text" name="blok-{{ blok.pk }}-nieuw__N__-nummer"></label>{% endif %}
+              {% if blok.heeft_tijd %}<label class="middel">Tijd<input type="text" name="blok-{{ blok.pk }}-nieuw__N__-tijd"></label>{% endif %}
+              <label class="breed">Taak<textarea name="blok-{{ blok.pk }}-nieuw__N__-omschrijving" rows="1" data-groei></textarea></label>
+              <label class="middel">Wie<input type="text" name="blok-{{ blok.pk }}-nieuw__N__-wie" list="wie-lijst"></label>
+              <label class="verwijder"><input type="checkbox" name="blok-{{ blok.pk }}-nieuw__N__-del" data-verwijder> Verwijderen</label>
+            </div>
+            {% for kolom in blok.detail_kolommen %}
+              <label class="detail">{{ kolom }}<textarea name="blok-{{ blok.pk }}-nieuw__N__-d{{ forloop.counter0 }}" rows="1" data-groei></textarea></label>
+            {% endfor %}
+          </div>
+        </template>
+        <button type="button" class="knop licht klein" data-voeg-toe>+ Taak toevoegen</button>
+        <p class="hint">Status, wie en opmerkingen van bestaande taken pas je aan op de gewone pagina.</p>
+      {% endif %}
+    </section>
+  {% endfor %}
+
+  <div class="bewerk-onder">
+    <a class="knop licht" href="{{ sectie.get_absolute_url }}">Annuleren</a>
+    <button type="submit" class="knop">Opslaan</button>
+  </div>
+</form>
+{% endblock %}

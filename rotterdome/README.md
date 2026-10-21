@@ -26,13 +26,17 @@ Voor het beheerscherm (`/admin/`) maak je eerst een account aan met
 - **Overzicht**: de totale voortgang en de voortgang per hoofdstuk en per werkdag.
 - **Sectiepagina's**: alles uit het PDF in dezelfde volgorde, dus dagkaart, tabellen, foto's,
   plattegrond en takenlijsten. Status, "Wie" en opmerkingen worden direct opgeslagen.
+- **Bewerken**: met de knop "✎ Bewerken" rechtsboven op elke pagina pas je de paginatitel,
+  tussenkoppen, teksten, dagkaarten, tabellen en taken aan. Je kunt rijen en taken toevoegen of
+  verwijderen, en hele blokken weghalen. Pas daarna op "Opslaan".
 - **Takenlijst**: alle taken, te filteren op status, persoon, zoekterm en sectie. Standaard zie
   je alles wat nog open staat of loopt.
 - **Printen**: de knop "Printen" (of Ctrl+P) geeft een nette afvinklijst op A4-liggend.
 
 ## Opnieuw importeren
 
-`importeer_draaiboek` vervangt de hele inhoud van de database. Heb je een nieuwe versie van het
+`importeer_draaiboek` vervangt de hele inhoud van de database. Wijzigingen die je met "Bewerken"
+hebt gemaakt gaan daarbij verloren; maak eventueel eerst een kopie van `db.sqlite3`. Heb je een nieuwe versie van het
 PDF en wil je de voortgang houden (status, wie en opmerking van taken met dezelfde omschrijving)?
 
 ```bash

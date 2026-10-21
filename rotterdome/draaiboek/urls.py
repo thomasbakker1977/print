@@ -9,4 +9,5 @@ urlpatterns = [
     path("taken/", views.taken, name="taken"),
     path("taak/<int:pk>/", views.taak_bijwerken, name="taak_bijwerken"),
     path("<slug:slug>/", views.sectie, name="sectie"),
+    path("<slug:slug>/bewerken/", views.sectie_bewerken, name="sectie_bewerken"),
 ]

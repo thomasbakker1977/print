@@ -39,6 +39,9 @@
     </aside>
 
     <main class="inhoud">
+      {% for melding in messages %}
+        <div class="bericht {{ melding.tags }}" role="status">{{ melding }}</div>
+      {% endfor %}
       {% block inhoud %}{% endblock %}
     </main>
   </div>
