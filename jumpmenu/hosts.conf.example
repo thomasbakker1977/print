@@ -1,0 +1,27 @@
+# ~/.config/jumpmenu/hosts.conf
+#
+# [service group]
+# name        host/ip          [user]   [port]
+#
+# Missing user/port fall back to DEFAULT_USER / DEFAULT_PORT.
+
+[web]
+web01         10.0.10.11       deploy
+web02         10.0.10.12       deploy
+lb01          10.0.10.5
+
+[database]
+pg-primary    10.0.20.10       postgres
+pg-replica    10.0.20.11       postgres
+redis01       10.0.20.30       root     2222
+
+[network]
+opnsense      10.0.0.1         root
+switch-core   10.0.0.2         admin
+
+# Optional per-guest overrides for Proxmox guests (not shown as a group).
+# <guest name | vmid>   <host or ->   [user or -]   [port or -]
+[pve-overrides]
+gitlab        -                git-admin
+105           10.0.30.5        ubuntu
+docker01      docker01.lan     -        2222

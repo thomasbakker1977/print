@@ -1,0 +1,15 @@
+{
+  "Profiles": [
+    {
+      "Name": "Jumphost Menu",
+      "Guid": "3c1f6a52-8d0e-4f4b-9a57-6a756d706d6e",
+      "Custom Command": "Yes",
+      "Command": "/usr/bin/ssh jump-menu",
+      "Close Sessions On End": true,
+      "Tags": [
+        "ssh",
+        "jumphost"
+      ]
+    }
+  ]
+}

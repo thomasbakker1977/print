@@ -1,0 +1,24 @@
+# Add to ~/.ssh/config on the MacBook.
+# Replace jumphost.example.com / thomas with your jumphost and user.
+
+# "ssh jump-menu"  -> straight into the menu (used by the iTerm2 profile)
+Host jump-menu
+    RequestTTY force
+    RemoteCommand ~/bin/jumpmenu
+
+# "ssh jump"       -> normal shell on the jumphost (scp/rsync work too)
+Host jump jump-menu
+    HostName jumphost.example.com
+    User thomas
+    IdentityFile ~/.ssh/id_ed25519
+    IdentitiesOnly yes
+    UseKeychain yes
+    AddKeysToAgent yes
+    ServerAliveInterval 30
+    # Reuse one connection for every new iTerm2 tab (instant tabs)
+    ControlMaster auto
+    ControlPath ~/.ssh/cm-%C
+    ControlPersist 10m
+    # Uncomment ONLY if the target keys live on the Mac instead of the
+    # jumphost (and set SSH_KEY="" in jumpmenu.conf):
+    # ForwardAgent yes

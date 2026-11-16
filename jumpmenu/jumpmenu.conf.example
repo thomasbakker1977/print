@@ -1,0 +1,36 @@
+# ~/.config/jumpmenu/jumpmenu.conf   (chmod 600 - contains the API token)
+# Plain bash; every setting is optional.
+
+MENU_TITLE="Jumphost"
+
+# --- SSH from the jumphost to the targets ----------------------------------
+# Private key on the jumphost. Set SSH_KEY="" to use your forwarded agent
+# instead (key stays on the MacBook, see README).
+SSH_KEY="$HOME/.ssh/id_ed25519"
+SSH_OPTS=(-o ServerAliveInterval=30 -o StrictHostKeyChecking=accept-new)
+DEFAULT_USER="root"
+DEFAULT_PORT=22
+
+# --- Proxmox API -----------------------------------------------------------
+# Several nodes may be listed; the first one that answers is used.
+PVE_API_URL="https://pve1.lan:8006 https://pve2.lan:8006"
+PVE_TOKEN_ID='jumpmenu@pve!menu'
+PVE_TOKEN_SECRET='xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
+PVE_INSECURE=1          # self-signed cert; better: PVE_CA_FILE=/etc/ssl/pve-root-ca.pem
+#PVE_CA_FILE=""
+PVE_TAGS_AS_GROUPS=1    # Proxmox tags also appear under "Service groups"
+PVE_SHOW_TEMPLATES=0
+CACHE_TTL=60            # seconds the guest/node list is cached ('r' forces reload)
+
+# How to find a guest's address, tried in order:
+#   agent = qemu-guest-agent (VMs) / container interfaces (LXC) via the API
+#   dns   = <guestname>.<GUEST_DOMAIN>
+#   name  = plain guest name
+GUEST_ADDR_ORDER="agent dns"
+GUEST_DOMAIN="lan"
+GUEST_USER="root"
+NODE_USER="root"
+
+# --- menu ------------------------------------------------------------------
+ALLOW_SHELL=1           # 's' drops into a normal shell on the jumphost
+USE_COLOR=1

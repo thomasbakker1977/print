@@ -1,0 +1,481 @@
+#!/usr/bin/env bash
+#
+# jumpmenu - ASCII SSH menu for a jumphost
+#
+# Shows service groups (from hosts.conf, optionally Proxmox tags),
+# Proxmox guests (VMs / containers) and Proxmox nodes, and opens an
+# SSH session to the selected target with a private key. When the
+# session ends you are back in the menu.
+#
+#   jumpmenu            interactive menu
+#   jumpmenu <name>     connect directly to a host/guest/node by name
+#   jumpmenu --list     print all known targets and exit
+#   jumpmenu --help
+#
+# Config:  ${XDG_CONFIG_HOME:-~/.config}/jumpmenu/jumpmenu.conf
+#          ${XDG_CONFIG_HOME:-~/.config}/jumpmenu/hosts.conf
+
+set -o pipefail
+
+VERSION="1.0.0"
+
+CONF_DIR="${JUMPMENU_CONF_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/jumpmenu}"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/jumpmenu"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/jumpmenu"
+
+# ---------------------------------------------------------------- defaults ---
+MENU_TITLE="Jumphost"
+HOSTS_FILE="$CONF_DIR/hosts.conf"
+
+SSH_KEY="$HOME/.ssh/id_ed25519"   # empty = use ssh-agent / ssh defaults
+SSH_OPTS=(-o ServerAliveInterval=30 -o StrictHostKeyChecking=accept-new)
+DEFAULT_USER="root"
+DEFAULT_PORT=22
+
+PVE_API_URL=""                    # space separated, tried in order
+PVE_TOKEN_ID=""                   # e.g. jumpmenu@pve!menu
+PVE_TOKEN_SECRET=""
+PVE_INSECURE=0                    # 1 = accept self-signed certificates
+PVE_CA_FILE=""                    # or point to the PVE root CA
+PVE_TIMEOUT=5
+PVE_TAGS_AS_GROUPS=1              # Proxmox tags show up as service groups
+PVE_SHOW_TEMPLATES=0
+
+GUEST_USER="root"
+GUEST_ADDR_ORDER="agent dns"      # agent = qemu-guest-agent / lxc interfaces
+GUEST_DOMAIN=""                   # dns: <guestname>.<GUEST_DOMAIN>
+NODE_USER="root"
+
+CACHE_TTL=60
+ALLOW_SHELL=1                     # menu entry for a shell on the jumphost
+USE_COLOR=1
+
+# shellcheck source=/dev/null
+[[ -r $CONF_DIR/jumpmenu.conf ]] && . "$CONF_DIR/jumpmenu.conf"
+
+mkdir -p "$CACHE_DIR" "$STATE_DIR" 2>/dev/null
+chmod 700 "$CACHE_DIR" 2>/dev/null
+
+TAB=$'\t'
+
+# ------------------------------------------------------------------ output ---
+if [[ $USE_COLOR == 1 && -t 1 && -z ${NO_COLOR:-} ]]; then
+    C_B=$'\e[1m' C_DIM=$'\e[2m' C_R=$'\e[31m' C_G=$'\e[32m' C_Y=$'\e[33m' C_C=$'\e[36m' C_0=$'\e[0m'
+else
+    C_B="" C_DIM="" C_R="" C_G="" C_Y="" C_C="" C_0=""
+fi
+
+die()  { printf '%sjumpmenu: %s%s\n' "$C_R" "$*" "$C_0" >&2; exit 1; }
+warn() { printf '%s%s%s\n' "$C_Y" "$*" "$C_0" >&2; }
+pause() { printf '\n%s[enter]%s ' "$C_DIM" "$C_0"; read -r _ || exit 0; }
+
+set_title() { [[ -t 1 ]] && printf '\e]0;%s\a' "$*"; }
+
+banner() {
+    local line="+----------------------------------------------------------------------+"
+    [[ -t 1 ]] && printf '\e[H\e[2J'
+    printf '%s\n' "$line"
+    printf '| %s%-68s%s |\n' "$C_B" "$MENU_TITLE  -  $1" "$C_0"
+    printf '%s\n\n' "$line"
+}
+
+# ------------------------------------------------------------- hosts.conf ---
+#   [group]
+#   name   host   [user]  [port]
+#
+#   [pve-overrides]            (not shown as a group)
+#   <guestname|vmid>  <host|->  [user|-]  [port|-]
+
+SVC_GROUPS=()          # ordered group names
+HOSTS=()           # group|name|host|user|port
+OVERRIDES=()       # key|host|user|port
+
+load_hosts() {
+    SVC_GROUPS=() HOSTS=() OVERRIDES=()
+    [[ -r $HOSTS_FILE ]] || return 0
+    local line group="" name host user port
+    while IFS= read -r line || [[ -n $line ]]; do
+        line=${line%%#*}
+        line=${line#"${line%%[![:space:]]*}"}
+        line=${line%"${line##*[![:space:]]}"}
+        [[ -z $line ]] && continue
+        if [[ $line =~ ^\[(.+)\]$ ]]; then
+            group=${BASH_REMATCH[1]}
+            [[ $group != pve-overrides ]] && SVC_GROUPS+=("$group")
+            continue
+        fi
+        read -r name host user port _ <<<"$line"
+        [[ -z $group || -z $name ]] && continue
+        if [[ $group == pve-overrides ]]; then
+            OVERRIDES+=("$name|${host:--}|${user:--}|${port:--}")
+        else
+            HOSTS+=("$group|$name|${host:-$name}|${user:-$DEFAULT_USER}|${port:-$DEFAULT_PORT}")
+        fi
+    done <"$HOSTS_FILE"
+}
+
+# ---------------------------------------------------------------- proxmox ---
+pve_enabled() { [[ -n $PVE_API_URL && -n $PVE_TOKEN_ID && -n $PVE_TOKEN_SECRET ]]; }
+
+pve_get() {   # pve_get /api/path  -> JSON on stdout
+    local url tls=()
+    [[ $PVE_INSECURE == 1 ]] && tls+=(-k)
+    [[ -n $PVE_CA_FILE ]] && tls+=(--cacert "$PVE_CA_FILE")
+    for url in $PVE_API_URL; do
+        # header passed via fd so the token never shows up in `ps`
+        if curl -fsS --max-time "$PVE_TIMEOUT" "${tls[@]}" \
+            -H @<(printf 'Authorization: PVEAPIToken=%s=%s\n' "$PVE_TOKEN_ID" "$PVE_TOKEN_SECRET") \
+            "${url%/}/api2/json$1" 2>/dev/null; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+file_age() {
+    local m
+    m=$(stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null) || { echo 999999; return; }
+    echo $(( $(date +%s) - m ))
+}
+
+pve_cached() {   # pve_cached <name> <path> [force]
+    local f="$CACHE_DIR/$1.json"
+    if [[ ${3:-0} == 1 || ! -s $f ]] || (( $(file_age "$f") > CACHE_TTL )); then
+        if pve_get "$2" >"$f.tmp" && jq -e .data "$f.tmp" >/dev/null 2>&1; then
+            mv "$f.tmp" "$f"
+        else
+            rm -f "$f.tmp"
+            [[ -s $f ]] && warn "Proxmox API unreachable - showing cached data" >&2
+        fi
+    fi
+    [[ -s $f ]] && cat "$f"
+}
+
+GUESTS=()   # vmid|type|name|status|node|tags
+NODES=()    # name|ip|online
+
+load_pve() {
+    GUESTS=() NODES=()
+    pve_enabled || return 0
+    local force=${1:-0} json
+    json=$(pve_cached resources /cluster/resources "$force") || return 1
+    mapfile -t GUESTS < <(jq -r --argjson tpl "$PVE_SHOW_TEMPLATES" '
+        .data[] | select(.type=="qemu" or .type=="lxc")
+                | select($tpl==1 or (.template // 0) != 1)
+                | [.vmid, (if .type=="qemu" then "vm" else "ct" end),
+                   (.name // ("vmid-" + (.vmid|tostring))), (.status // "?"),
+                   .node, ((.tags // "") | gsub("[;, ]+"; ","))]
+                | map(tostring) | join("|")' <<<"$json" | sort -t'|' -k3,3 -f)
+    json=$(pve_cached status /cluster/status "$force") || return 1
+    mapfile -t NODES < <(jq -r '
+        .data[] | select(.type=="node")
+                | [.name, (.ip // .name), (if (.online // 1) == 1 then "online" else "offline" end)]
+                | join("|")' <<<"$json" | sort -t'|' -k1,1)
+}
+
+first_ipv4() { grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}' | grep -Ev '^(127\.|169\.254\.)' | head -n1; }
+
+guest_addr() {   # guest_addr vmid type name node
+    local vmid=$1 type=$2 name=$3 node=$4 m ip
+    for m in $GUEST_ADDR_ORDER; do
+        case $m in
+            agent)
+                pve_enabled || continue
+                if [[ $type == vm ]]; then
+                    ip=$(pve_get "/nodes/$node/qemu/$vmid/agent/network-get-interfaces" |
+                        jq -r '.data.result[]? | select(.name!="lo") | ."ip-addresses"[]?
+                               | select(."ip-address-type"=="ipv4") | ."ip-address"' 2>/dev/null | first_ipv4)
+                else
+                    ip=$(pve_get "/nodes/$node/lxc/$vmid/interfaces" |
+                        jq -r '.data[]? | select(.name!="lo") | .inet // empty' 2>/dev/null | first_ipv4)
+                fi
+                ;;
+            dns)
+                ip=$name${GUEST_DOMAIN:+.$GUEST_DOMAIN}
+                ;;
+            name)
+                ip=$name
+                ;;
+        esac
+        [[ -n $ip ]] && { echo "$ip"; return 0; }
+    done
+    return 1
+}
+
+# -------------------------------------------------------------------- ssh ---
+do_ssh() {   # do_ssh label user host port
+    local label=$1 user=$2 host=$3 port=$4 cmd=(ssh -t)
+    [[ -n $SSH_KEY ]] && cmd+=(-i "$SSH_KEY" -o IdentitiesOnly=yes)
+    cmd+=("${SSH_OPTS[@]}" -p "$port" "$user@$host")
+    printf '\n%s-> %s%s  (%s@%s:%s)\n\n' "$C_C" "$label" "$C_0" "$user" "$host" "$port"
+    printf '%s %s -> %s@%s:%s\n' "$(date '+%F %T')" "$label" "$user" "$host" "$port" >>"$STATE_DIR/history.log"
+    set_title "$label"
+    "${cmd[@]}"
+    local rc=$?
+    set_title "$MENU_TITLE"
+    if (( rc != 0 )); then
+        warn "ssh exited with code $rc"
+        [[ -t 0 ]] && pause
+    fi
+    return "$rc"
+}
+
+connect_static() {   # group|name|host|user|port
+    local g n h u p
+    IFS='|' read -r g n h u p <<<"$1"
+    do_ssh "$n" "$u" "$h" "$p"
+}
+
+connect_guest() {    # vmid|type|name|status|node|tags
+    local vmid type name status node tags o k oh ou op host="" user=$GUEST_USER port=$DEFAULT_PORT
+    IFS='|' read -r vmid type name status node tags <<<"$1"
+    for o in "${OVERRIDES[@]}"; do
+        IFS='|' read -r k oh ou op <<<"$o"
+        if [[ $k == "$name" || $k == "$vmid" ]]; then
+            [[ $oh != - ]] && host=$oh
+            [[ $ou != - ]] && user=$ou
+            [[ $op != - ]] && port=$op
+        fi
+    done
+    if [[ $status != running ]]; then
+        warn "$name ($vmid) is $status"
+        [[ -t 0 ]] && { pause; return 1; }
+    fi
+    if [[ -z $host ]]; then
+        printf '%sresolving address of %s ...%s\n' "$C_DIM" "$name" "$C_0"
+        host=$(guest_addr "$vmid" "$type" "$name" "$node") ||
+            { warn "could not determine an address for $name ($vmid)"; [[ -t 0 ]] && pause; return 1; }
+    fi
+    do_ssh "$name ($vmid@$node)" "$user" "$host" "$port"
+}
+
+connect_node() {     # name|ip|online
+    local n ip st
+    IFS='|' read -r n ip st <<<"$1"
+    do_ssh "$n (pve node)" "$NODE_USER" "$ip" "$DEFAULT_PORT"
+}
+
+connect() {          # kind<TAB>payload
+    case ${1%%"$TAB"*} in
+        S) connect_static "${1#*"$TAB"}" ;;
+        G) connect_guest  "${1#*"$TAB"}" ;;
+        N) connect_node   "${1#*"$TAB"}" ;;
+    esac
+}
+
+# ------------------------------------------------------------ list picker ---
+# choose <title> <header> <item>...   item = "display<TAB>kind<TAB>payload"
+# sets CHOICE="kind<TAB>payload"; returns 1 on back
+CHOICE=""
+choose() {
+    local title=$1 header=$2; shift 2
+    local items=("$@") view=() filter="" input i n d
+    while :; do
+        banner "$title"
+        view=()
+        for i in "${!items[@]}"; do
+            d=${items[i]%%"$TAB"*}
+            if [[ -z $filter || ${d,,} == *"${filter,,}"* ]]; then view+=("$i"); fi
+        done
+        [[ -n $header ]] && printf '       %s%s%s\n' "$C_DIM" "$header" "$C_0"
+        n=0
+        for i in "${view[@]}"; do
+            n=$((n + 1))
+            printf ' %4d) %s\n' "$n" "${items[i]%%"$TAB"*}"
+        done
+        (( n == 0 )) && printf '       (nothing here)\n'
+        printf '\n'
+        [[ -n $filter ]] && printf ' %sfilter:%s %s\n' "$C_Y" "$C_0" "$filter"
+        printf ' %s[nr] connect  [text] filter  [b] back  [q] quit%s > ' "$C_DIM" "$C_0"
+        read -r input || exit 0
+        case $input in
+            q | Q) exit 0 ;;
+            b | B) return 1 ;;
+            "") filter="" ;;
+            *[!0-9]*) filter=${input#/} ;;
+            *)
+                if (( input >= 1 && input <= n )); then
+                    CHOICE=${items[view[input - 1]]#*"$TAB"}
+                    return 0
+                fi
+                ;;
+        esac
+    done
+}
+
+colored_status() {
+    case $1 in
+        running | online) printf '%s%-8s%s' "$C_G" "$1" "$C_0" ;;
+        stopped | offline) printf '%s%-8s%s' "$C_R" "$1" "$C_0" ;;
+        *) printf '%-8s' "$1" ;;
+    esac
+}
+
+guest_item() {   # vmid|type|name|status|node|tags
+    local vmid type name status node tags
+    IFS='|' read -r vmid type name status node tags <<<"$1"
+    printf '%-6s %-2s  %-28.28s %s %-10s %s%s%s\t%s\t%s' "$vmid" "$type" "$name" \
+        "$(colored_status "$status")" "$node" "$C_DIM" "$tags" "$C_0" G "$1"
+}
+GUEST_HEADER=$(printf '%-6s %-2s  %-28s %-8s %-10s %s' VMID T NAME STATUS NODE TAGS)
+
+# ------------------------------------------------------------------ menus ---
+menu_guests() {
+    local items=() g
+    for g in "${GUESTS[@]}"; do items+=("$(guest_item "$g")"); done
+    while choose "Proxmox guests" "$GUEST_HEADER" "${items[@]}"; do connect "$CHOICE"; done
+}
+
+menu_nodes() {
+    local items=() n name ip st
+    for n in "${NODES[@]}"; do
+        IFS='|' read -r name ip st <<<"$n"
+        items+=("$(printf '%-20s %-18s %s' "$name" "$ip" "$(colored_status "$st")")${TAB}N${TAB}$n")
+    done
+    while choose "Proxmox nodes" "$(printf '%-20s %-18s %s' NODE ADDRESS STATUS)" "${items[@]}"; do
+        connect "$CHOICE"
+    done
+}
+
+menu_group() {   # menu_group static|tag <name>
+    local kind=$1 name=$2 items=() h g n host user port
+    if [[ $kind == static ]]; then
+        for h in "${HOSTS[@]}"; do
+            IFS='|' read -r g n host user port <<<"$h"
+            [[ $g == "$name" ]] || continue
+            items+=("$(printf '%-24s %-30s %s' "$n" "$user@$host" "$port")${TAB}S${TAB}$h")
+        done
+        while choose "group: $name" "$(printf '%-24s %-30s %s' NAME TARGET PORT)" "${items[@]}"; do
+            connect "$CHOICE"
+        done
+    else
+        for h in "${GUESTS[@]}"; do
+            IFS='|' read -r _ _ _ _ _ g <<<"$h"
+            [[ ,$g, == *",$name,"* ]] && items+=("$(guest_item "$h")")
+        done
+        while choose "tag: $name" "$GUEST_HEADER" "${items[@]}"; do connect "$CHOICE"; done
+    fi
+}
+
+menu_groups() {
+    local items=() g c h tags=() t
+    for g in "${SVC_GROUPS[@]}"; do
+        c=0
+        for h in "${HOSTS[@]}"; do [[ ${h%%|*} == "$g" ]] && c=$((c + 1)); done
+        items+=("$(printf '%-30s %3d hosts' "$g" "$c")${TAB}static${TAB}$g")
+    done
+    if [[ $PVE_TAGS_AS_GROUPS == 1 ]]; then
+        mapfile -t tags < <(for h in "${GUESTS[@]}"; do
+            t=${h##*|}; [[ -n $t ]] && tr ',' '\n' <<<"$t"
+        done | sort | uniq -c | awk '{print $2"|"$1}')
+        for t in "${tags[@]}"; do
+            items+=("$(printf '%-30s %3d guests  %s(proxmox tag)%s' "#${t%|*}" "${t#*|}" "$C_DIM" "$C_0")${TAB}tag${TAB}${t%|*}")
+        done
+    fi
+    while choose "Service groups" "" "${items[@]}"; do
+        menu_group "${CHOICE%%"$TAB"*}" "${CHOICE#*"$TAB"}"
+    done
+}
+
+main_menu() {
+    local input
+    set_title "$MENU_TITLE"
+    while :; do
+        banner "$(whoami)@$(hostname -s 2>/dev/null || hostname)"
+        printf '   %s1%s) Service groups     %s(%d groups)%s\n' "$C_B" "$C_0" "$C_DIM" "${#SVC_GROUPS[@]}" "$C_0"
+        if pve_enabled; then
+            printf '   %s2%s) Proxmox guests     %s(%d)%s\n' "$C_B" "$C_0" "$C_DIM" "${#GUESTS[@]}" "$C_0"
+            printf '   %s3%s) Proxmox nodes      %s(%d)%s\n' "$C_B" "$C_0" "$C_DIM" "${#NODES[@]}" "$C_0"
+        else
+            printf '   %s2) Proxmox guests     (not configured)%s\n' "$C_DIM" "$C_0"
+            printf '   %s3) Proxmox nodes      (not configured)%s\n' "$C_DIM" "$C_0"
+        fi
+        printf '\n'
+        printf '   %s/%s) Search everything\n' "$C_B" "$C_0"
+        printf '   %sr%s) Reload config + Proxmox\n' "$C_B" "$C_0"
+        [[ $ALLOW_SHELL == 1 ]] && printf '   %ss%s) Shell on jumphost\n' "$C_B" "$C_0"
+        printf '   %sq%s) Quit\n\n > ' "$C_B" "$C_0"
+        read -r input || exit 0
+        case $input in
+            1) menu_groups ;;
+            2) pve_enabled && menu_guests ;;
+            3) pve_enabled && menu_nodes ;;
+            /*) menu_search "${input#/}" ;;
+            r | R) load_hosts; load_pve 1 ;;
+            s | S) [[ $ALLOW_SHELL == 1 ]] && { set_title "jumphost shell"; "${SHELL:-/bin/bash}" -l; set_title "$MENU_TITLE"; } ;;
+            q | Q) exit 0 ;;
+        esac
+    done
+}
+
+all_items() {
+    local h g n host user port
+    for h in "${HOSTS[@]}"; do
+        IFS='|' read -r g n host user port <<<"$h"
+        printf '%s\n' "$(printf '%-6s %-2s  %-28.28s %s' "" "" "$n" "${C_DIM}[$g] $user@$host${C_0}")${TAB}S${TAB}$h"
+    done
+    for h in "${GUESTS[@]}"; do printf '%s\n' "$(guest_item "$h")"; done
+    for h in "${NODES[@]}"; do
+        printf '%s\n' "$(printf '%-6s %-2s  %-28.28s %s' "" "pn" "${h%%|*}" "${C_DIM}proxmox node$C_0")${TAB}N${TAB}$h"
+    done
+}
+
+menu_search() {
+    local q=${1,,} items=() f=() i d
+    mapfile -t items < <(all_items)
+    for i in "${items[@]}"; do
+        d=${i%%"$TAB"*}
+        [[ -z $q || ${d,,} == *"$q"* ]] && f+=("$i")
+    done
+    while choose "search${1:+: $1}" "$GUEST_HEADER" "${f[@]}"; do connect "$CHOICE"; done
+}
+
+# ------------------------------------------------------- direct / listing ---
+find_exact() {   # print "kind<TAB>payload" for targets named exactly $1
+    local h n v
+    for h in "${HOSTS[@]}"; do IFS='|' read -r _ n _ <<<"$h"; [[ $n == "$1" ]] && printf 'S\t%s\n' "$h"; done
+    for h in "${GUESTS[@]}"; do IFS='|' read -r v _ n _ <<<"$h"; [[ $n == "$1" || $v == "$1" ]] && printf 'G\t%s\n' "$h"; done
+    for h in "${NODES[@]}"; do [[ ${h%%|*} == "$1" ]] && printf 'N\t%s\n' "$h"; done
+}
+
+usage() { sed -n '3,16p' "$0" | sed 's/^# \{0,1\}//'; }
+
+check_deps() {
+    command -v ssh >/dev/null || die "ssh not found"
+    if pve_enabled; then
+        command -v curl >/dev/null || die "curl is required for the Proxmox API"
+        command -v jq   >/dev/null || die "jq is required for the Proxmox API"
+    fi
+    [[ -z $SSH_KEY || -r $SSH_KEY ]] || warn "SSH_KEY $SSH_KEY not readable - falling back to ssh-agent"
+    [[ -z $SSH_KEY || -r $SSH_KEY ]] || SSH_KEY=""
+}
+
+main() {
+    case ${1:-} in
+        -h | --help) usage; exit 0 ;;
+        -V | --version) echo "jumpmenu $VERSION"; exit 0 ;;
+    esac
+    check_deps
+    load_hosts
+    load_pve 0 || warn "could not load Proxmox data"
+
+    case ${1:-} in
+        "") main_menu ;;
+        -l | --list)
+            all_items | cut -f1
+            ;;
+        *)
+            local m=()
+            mapfile -t m < <(find_exact "$1")
+            if (( ${#m[@]} == 1 )); then
+                connect "${m[0]}"
+            elif [[ -t 0 ]]; then
+                menu_search "$1"
+            else
+                die "no unique target named '$1'"
+            fi
+            ;;
+    esac
+}
+
+main "$@"
